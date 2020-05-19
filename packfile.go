@@ -2,6 +2,7 @@ package iotafs
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/iotafs/iotafs-go/internal/sum"
@@ -25,20 +26,23 @@ func newPackfileBuilder(w io.Writer) (*packfileBuilder, error) {
 	w = io.MultiWriter(w, hash)
 	wr := &countingWriter{w, 0}
 
-	// Write the object type
-	if _, err := wr.Write([]byte{packfileObject}); err != nil {
-		return nil, err
-	}
-
 	b := packfileBuilder{wr, hash}
 	return &b, nil
 }
 
 // append writes a chunk of data to the packfile.
 func (b *packfileBuilder) append(data []byte, sum sum.Sum, mode compressMode) error {
-	block := makeBlock(data, sum, mode)
+	if b.size() == 0 {
+		if _, err := b.w.Write([]byte{packfileObject}); err != nil {
+			return fmt.Errorf("setting packfile object type: %w", err)
+		}
+	}
+	block, err := makeBlock(data, sum, mode)
+	if err != nil {
+		return fmt.Errorf("appending chunk to packfile: %w", err)
+	}
 	if _, err := b.w.Write(block); err != nil {
-		return err
+		return fmt.Errorf("appending chunk to packfile: %w", err)
 	}
 	return nil
 }
@@ -55,20 +59,21 @@ func (b *packfileBuilder) sum() sum.Sum {
 
 // makeBlock creates a packfile block in its binary format. The data should not be
 // compressed beforehand.
-func makeBlock(data []byte, s sum.Sum, mode compressMode) []byte {
+func makeBlock(data []byte, s sum.Sum, mode compressMode) ([]byte, error) {
+	compressed, err := mode.compress(data)
+	if err != nil {
+		return nil, err
+	}
 
-	// Reserve the first 8 bytes for the size of the compressed data
-	block := make([]byte, 8)
+	capacity := 8 + 1 + sum.Size + len(data)
+	block := make([]byte, 8, capacity)
+
+	binary.LittleEndian.PutUint64(block[:8], uint64(len(compressed)))
 	block = append(block, mode.asUint8())
 	block = append(block, s[:]...)
-	before := len(block)
-	block = mode.compress(block, data)
+	block = append(block, compressed...)
 
-	// Set the size of the compressed data
-	size := uint64(len(block) - before)
-	binary.LittleEndian.PutUint64(block[:8], size)
-
-	return block
+	return block, nil
 }
 
 type countingWriter struct {
