@@ -1,6 +1,7 @@
 package iotafs
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -333,9 +334,136 @@ func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
 	return infos, nil
 }
 
+func (c *Client) HeadFile(name string) ([]FileInfo, error) {
+	ctx := context.Background()
+	files, err := c.iclient.HeadFile(ctx, &pb.Filename{Name: name})
+	if err != nil {
+		return nil, err
+	}
+
+	infos := make([]FileInfo, len(files.Infos))
+	for i, info := range files.Infos {
+		s, err := sum.FromBytes(info.Sum)
+		if err != nil {
+			return nil, err
+		}
+		infos[i] = FileInfo{
+			Name:      info.Name,
+			CreatedAt: time.Unix(0, info.CreatedAt),
+			Size:      info.Size,
+			Sum:       s,
+		}
+	}
+
+	return infos, nil
+
+}
+
 type FileInfo struct {
 	Name      string
 	CreatedAt time.Time
 	Size      uint64
 	Sum       sum.Sum
+}
+
+func (c *Client) Download(fileID sum.Sum, dst string) error {
+	ctx := context.Background()
+	resp, err := c.iclient.Download(ctx, &pb.FileID{Sum: fileID[:]})
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("creating file %s: %w", dst, err)
+	}
+
+	// Download the data for each packfile section using the provided URLs, and use
+	// the data to construct the original file.
+	err = func() error {
+		for i, s := range resp.Sections {
+			err := c.downloadSection(f, s)
+			if err != nil {
+				return fmt.Errorf("section %d: %w", i, err)
+			}
+		}
+		return nil
+	}()
+	cerr := f.Close()
+	if err != nil || cerr != nil {
+		return mergeErrors(err, cerr)
+	}
+
+	return nil
+}
+
+func (c *Client) downloadSection(f *os.File, s *pb.Section) error {
+	// Create temp file to hold the section data
+	tmp, err := ioutil.TempFile("", "")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	defer tmp.Close()
+	defer os.Remove(tmp.Name())
+
+	// Construct a request to get the section data
+	req, err := http.NewRequest("GET", s.Url, nil)
+	if err != nil {
+		return err
+	}
+	length := s.RangeEnd - s.RangeStart
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", s.RangeStart, s.RangeEnd))
+
+	resp, err := c.hclient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if n, err := io.Copy(tmp, resp.Body); err != nil {
+		return err
+	} else if n != int64(length) {
+		return fmt.Errorf("expected %d bytes but only received %d", length, n)
+	}
+
+	// Add the data for each chunk to the file, ensuring the checksum matches
+	for _, chunk := range s.Chunks {
+		_, err = tmp.Seek(int64(chunk.BlockOffset), io.SeekStart)
+		if err != nil {
+			return err
+		}
+
+		block, err := readBlock(tmp)
+		if err != nil {
+			return fmt.Errorf("reading block: %w", err)
+		}
+
+		h, err := sum.New()
+		if err != nil {
+			return err
+		}
+		w := io.MultiWriter(f, h)
+		if err := block.Mode.decompressStream(w, bytes.NewReader(block.Data)); err != nil {
+			return fmt.Errorf("decompression block: %w", err)
+		}
+
+		s := h.Sum()
+		if s != block.Sum {
+			return fmt.Errorf("actual chunk checksum %x does not match block sum %x", s, block.Sum)
+		}
+	}
+
+	return nil
+}
+
+func mergeErrors(e error, minor error) error {
+	if e == nil && minor == nil {
+		return nil
+	}
+	if e == nil {
+		return minor
+	}
+	if minor == nil {
+		return e
+	}
+	return fmt.Errorf("%w; %v", e, minor)
 }

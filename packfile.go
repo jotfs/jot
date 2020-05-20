@@ -76,6 +76,38 @@ func makeBlock(data []byte, s sum.Sum, mode compressMode) ([]byte, error) {
 	return block, nil
 }
 
+type block struct {
+	Sum    sum.Sum
+	Mode   compressMode
+	Data   []byte
+}
+
+func readBlock(r io.Reader) (block, error) {
+	var size uint64
+	if err := binary.Read(r, binary.LittleEndian, &size); err != nil {
+		return block{}, err
+	}
+	var m uint8
+	if err := binary.Read(r, binary.LittleEndian, &m); err != nil {
+		return block{}, err
+	}
+	mode, err := fromUint8(m)
+	if err != nil {
+		return block{}, fmt.Errorf("invalid compression mode %d", mode)
+	}
+	var s sum.Sum
+	if _, err := io.ReadFull(r, s[:]); err != nil {
+		return block{}, err
+	}
+	// TODO: put upper limit on size to prevent out-of-memory error
+	compressed := make([]byte, size)
+	if _, err := io.ReadFull(r, compressed); err != nil {
+		return block{}, err
+	}
+
+	return block{Sum: s, Mode: mode, Data: compressed}, nil
+}
+
 type countingWriter struct {
 	w    io.Writer
 	size uint64

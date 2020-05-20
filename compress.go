@@ -2,6 +2,7 @@ package iotafs
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/DataDog/zstd"
 )
@@ -39,6 +40,22 @@ func (m compressMode) compress(src []byte) ([]byte, error) {
 		return zstd.Compress(nil, src)
 	default:
 		panic("not implemented")
+	}
+}
+
+// decompressStream decompresses data from src and writes it to dst.
+func (m compressMode) decompressStream(dst io.Writer, src io.Reader) error {
+	switch m {
+	case CompressNone:
+		_, err := io.Copy(dst, src)
+		return err
+	case CompressZstd:
+		r := zstd.NewReader(src)
+		_, err := io.Copy(dst, r)
+		cerr := r.Close()
+		return mergeErrors(err, cerr)
+	default:
+		return fmt.Errorf("unknown compression mode %d", m)
 	}
 }
 

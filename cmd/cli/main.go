@@ -28,10 +28,29 @@ func uploadFile(client *iotafs.Client, c *cli.Context) error {
 		// Copying from one Iota location to another
 		// TODO
 	} else if srcRemote && !dstRemote {
-		// Copying from Iota source to local destination (i.e. download)
-		// TODO
+		// Copying from Iota source to local destination (download)
+		dstEx, err := homedir.Expand(dst)
+		if err != nil {
+			return fmt.Errorf("invalid path %q", dst)
+		}
+
+		versions, err := client.HeadFile(src)
+		if err != nil {
+			return err
+		}
+		if len(versions) == 0 {
+			return fmt.Errorf("file %s not found on remote", src)
+		}
+		latest := versions[0]
+
+		// TODO: check destination directory exists
+		// TODO: allow user to specify version with --version flag
+
+		if err := client.Download(latest.Sum, dstEx); err != nil {
+			return err
+		}
 	} else if !srcRemote && dstRemote {
-		// Copying from local source to Iota destination (i.e. upload)
+		// Copying from local source to Iota destination (upload)
 
 		srcEx, err := homedir.Expand(src)
 		if err != nil {
@@ -54,14 +73,14 @@ func uploadFile(client *iotafs.Client, c *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("unable to open %s: %v", src, err)
 		}
-		err = client.UploadWithContext(c.Context, f, dst, iotafs.CompressNone)
+		err = client.UploadWithContext(c.Context, f, dst, iotafs.CompressZstd)
 		if err != nil {
 			return err
 		}
 
 	} else {
 		// Local source & destination -- error
-		return fmt.Errorf("at least one of <src> and <dst> must be iota:// locations")
+		return fmt.Errorf("at least one of <src> or <dst> must be an iota:// location")
 	}
 
 	return nil
