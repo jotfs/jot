@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -66,6 +67,43 @@ func uploadFile(client *iotafs.Client, c *cli.Context) error {
 	return nil
 }
 
+func listFiles(client *iotafs.Client, c *cli.Context) error {
+	args := c.Args()
+	if args.Len() != 1 {
+		return fmt.Errorf("only 1 argument expected")
+	}
+
+	pattern := args.Get(0)
+
+	res, err := client.ListFiles(pattern)
+	if err != nil {
+		return err
+	}
+
+	for _, row := range res {
+		ts := row.CreatedAt.Local().Format(time.RFC3339)
+		fmt.Printf("%s  %s  %s\n", ts, humanBytes(row.Size), row.Name)
+	}
+
+	return nil
+}
+
+func humanBytes(size uint64) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+	s := float64(size) / 1024
+	if s < 1024 {
+		return fmt.Sprintf("%5.1f KiB", s)
+	}
+	s /= 1024
+	if s < 1024 {
+		return fmt.Sprintf("%5.1f MiB", s)
+	}
+	s /= 1024
+	return fmt.Sprintf("%5.1f GiB", s)
+}
+
 func isIotaLocation(s string) (string, bool) {
 	if strings.HasPrefix(s, "iota://") {
 		return s[6:], true
@@ -120,6 +158,12 @@ func main() {
 				},
 			},
 			Action: makeAction(uploadFile),
+		},
+		{
+			Name:      "ls",
+			Usage:     "List files",
+			UsageText: "iota ls <pattern>",
+			Action:    makeAction(listFiles),
 		},
 	}
 

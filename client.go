@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"time"
 
 	"github.com/google/uuid"
 	pb "github.com/iotafs/iotafs-go/internal/protos/upload"
@@ -306,4 +307,35 @@ func (p *packer) addChunk(data []byte, sum sum.Sum, mode compressMode) error {
 		}
 	}
 	return p.builder.append(data, sum, mode)
+}
+
+func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
+	ctx := context.Background()
+	files, err := c.iclient.ListFiles(ctx, &pb.Prefix{Prefix: prefix})
+	if err != nil {
+		return nil, err
+	}
+
+	infos := make([]FileInfo, len(files.Infos))
+	for i, info := range files.Infos {
+		s, err := sum.FromBytes(info.Sum)
+		if err != nil {
+			return nil, err
+		}
+		infos[i] = FileInfo{
+			Name:      info.Name,
+			CreatedAt: time.Unix(0, info.CreatedAt),
+			Size:      info.Size,
+			Sum:       s,
+		}
+	}
+
+	return infos, nil
+}
+
+type FileInfo struct {
+	Name      string
+	CreatedAt time.Time
+	Size      uint64
+	Sum       sum.Sum
 }
