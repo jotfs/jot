@@ -13,7 +13,24 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+const (
+	kiB = 1024
+	miB = 1024 * kiB
+	giB = 1024 * miB
+)
+
 type handler func(*iotafs.Client, *cli.Context) error
+
+func getLatestVersion(client *iotafs.Client, name string) (iotafs.FileInfo, error) {
+	versions, err := client.HeadFile(name)
+	if err != nil {
+		return iotafs.FileInfo{}, err
+	}
+	if len(versions) == 0 {
+		return iotafs.FileInfo{}, fmt.Errorf("file %s not found", name)
+	}
+	return versions[0], nil
+}
 
 func cp(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
@@ -27,15 +44,10 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 	if srcRemote && dstRemote {
 		// Copying from one Iota location to another
 		// TODO: allow user to specify version with --version flag
-		versions, err := client.HeadFile(src)
+		latest, err := getLatestVersion(client, src)
 		if err != nil {
 			return err
 		}
-		if len(versions) == 0 {
-			return fmt.Errorf("file %s not found on remote", src)
-		}
-		latest := versions[0]
-
 		newID, err := client.Copy(latest.Sum, dst)
 		if err != nil {
 			return err
@@ -44,22 +56,17 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 
 	} else if srcRemote && !dstRemote {
 		// Copying from Iota source to local destination (download)
+		// TODO: check destination directory exists
+		// TODO: allow user to specify version with --version flag
 		dstEx, err := homedir.Expand(dst)
 		if err != nil {
 			return fmt.Errorf("invalid path %q", dst)
 		}
 
-		versions, err := client.HeadFile(src)
+		latest, err := getLatestVersion(client, src)
 		if err != nil {
 			return err
 		}
-		if len(versions) == 0 {
-			return fmt.Errorf("file %s not found on remote", src)
-		}
-		latest := versions[0]
-
-		// TODO: check destination directory exists
-		// TODO: allow user to specify version with --version flag
 
 		if err := client.Download(latest.Sum, dstEx); err != nil {
 			return err
@@ -106,36 +113,59 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	if args.Len() != 1 {
 		return fmt.Errorf("only 1 argument expected")
 	}
-
 	pattern := args.Get(0)
 
 	res, err := client.ListFiles(pattern)
 	if err != nil {
 		return err
 	}
-
 	for _, row := range res {
 		ts := row.CreatedAt.Local().Format(time.RFC3339)
-		fmt.Printf("%s  %s  %s\n", ts, humanBytes(row.Size), row.Name)
+		s := row.Sum.AsHex()[:8]
+		fmt.Printf("%s%11s  %s  %s\n", ts, humanBytes(row.Size), row.Name, s)
 	}
 
 	return nil
 }
 
+func rm(client *iotafs.Client, c *cli.Context) error {
+	args := c.Args()
+
+	// TODO: implement --all-versions flag
+	// TODO: implement --version flag (only one arg allowed in this case)
+
+	for _, name := range args.Slice() {
+		latest, err := getLatestVersion(client, name)
+		if err != nil {
+			return err
+		}
+		if err := client.Delete(latest.Sum); err != nil {
+			return err
+		}
+		fmt.Printf("Deleted %s\n", name)
+	}
+
+	return nil
+}
+
+func writeErrorf(format string, args ...interface{}) {
+	_, err := os.Stderr.WriteString(fmt.Sprintf(format, args...))
+	if err != nil {
+		panic(err)
+	}
+}
+
 func humanBytes(size uint64) string {
-	if size < 1024 {
-		return fmt.Sprintf("%5.1d B  ", size)
+	if size < kiB {
+		return fmt.Sprintf("%5.1d B", size)
 	}
-	s := float64(size) / 1024
-	if s < 1024 {
-		return fmt.Sprintf("%5.1f KiB", s)
+	if size < miB {
+		return fmt.Sprintf("%5.1f KiB", float64(size)/kiB)
 	}
-	s /= 1024
-	if s < 1024 {
-		return fmt.Sprintf("%5.1f MiB", s)
+	if size < giB {
+		return fmt.Sprintf("%5.1f MiB", float64(size)/miB)
 	}
-	s /= 1024
-	return fmt.Sprintf("%5.1f GiB", s)
+	return fmt.Sprintf("%5.1f GiB", float64(size)/giB)
 }
 
 func isIotaLocation(s string) (string, bool) {
@@ -157,7 +187,6 @@ func toSentence(s string) string {
 	if r != utf8.RuneError && r != rune('.') {
 		s = s + "."
 	}
-
 	return s
 }
 
@@ -198,6 +227,12 @@ func main() {
 			Usage:     "List files",
 			UsageText: "iota ls <pattern>",
 			Action:    makeAction(ls),
+		},
+		{
+			Name:      "rm",
+			Usage:     "Remove files",
+			UsageText: "iota rm <file>...",
+			Action:    makeAction(rm),
 		},
 	}
 

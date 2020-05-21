@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/iotafs/fastcdc-go"
 )
+
+var ErrNotFound = errors.New("not found")
 
 const (
 	kiB             = 1024
@@ -319,6 +322,7 @@ func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
 
 	infos := make([]FileInfo, len(files.Infos))
 	for i, info := range files.Infos {
+		fmt.Printf("%x\n", info.Sum)
 		s, err := sum.FromBytes(info.Sum)
 		if err != nil {
 			return nil, err
@@ -481,4 +485,11 @@ func (c *Client) Copy(src sum.Sum, dst string) (sum.Sum, error) {
 		return sum.Sum{}, err
 	}
 	return s, nil
+}
+
+func (c *Client) Delete(fileID sum.Sum) error {
+	ctx := context.Background()
+	// TODO: return NotFound if twirp.NotFoundError
+	_, err := c.iclient.Delete(ctx, &pb.FileID{Sum: fileID[:]})
+	return err
 }
