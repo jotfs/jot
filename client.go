@@ -335,14 +335,16 @@ func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
 }
 
 func (c *Client) HeadFile(name string) ([]FileInfo, error) {
+	// TODO: implement pagination
+
 	ctx := context.Background()
-	files, err := c.iclient.HeadFile(ctx, &pb.Filename{Name: name})
+	files, err := c.iclient.HeadFile(ctx, &pb.HeadFileRequest{Name: name, Limit: 1000})
 	if err != nil {
 		return nil, err
 	}
 
-	infos := make([]FileInfo, len(files.Infos))
-	for i, info := range files.Infos {
+	infos := make([]FileInfo, len(files.Info))
+	for i, info := range files.Info {
 		s, err := sum.FromBytes(info.Sum)
 		if err != nil {
 			return nil, err
@@ -356,7 +358,6 @@ func (c *Client) HeadFile(name string) ([]FileInfo, error) {
 	}
 
 	return infos, nil
-
 }
 
 type FileInfo struct {
@@ -466,4 +467,18 @@ func mergeErrors(e error, minor error) error {
 		return e
 	}
 	return fmt.Errorf("%w; %v", e, minor)
+}
+
+func (c *Client) Copy(src sum.Sum, dst string) (sum.Sum, error) {
+	ctx := context.Background()
+	fileID, err := c.iclient.Copy(ctx, &pb.CopyRequest{SrcId: src[:], Dst: dst})
+	// TODO: return NotFound if twirp.NotFoundError
+	if err != nil {
+		return sum.Sum{}, err
+	}
+	s, err := sum.FromBytes(fileID.Sum)
+	if err != nil {
+		return sum.Sum{}, err
+	}
+	return s, nil
 }

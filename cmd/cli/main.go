@@ -15,7 +15,7 @@ import (
 
 type handler func(*iotafs.Client, *cli.Context) error
 
-func uploadFile(client *iotafs.Client, c *cli.Context) error {
+func cp(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
 	if args.Len() != 2 {
 		return fmt.Errorf("two arguments expected")
@@ -26,7 +26,22 @@ func uploadFile(client *iotafs.Client, c *cli.Context) error {
 
 	if srcRemote && dstRemote {
 		// Copying from one Iota location to another
-		// TODO
+		// TODO: allow user to specify version with --version flag
+		versions, err := client.HeadFile(src)
+		if err != nil {
+			return err
+		}
+		if len(versions) == 0 {
+			return fmt.Errorf("file %s not found on remote", src)
+		}
+		latest := versions[0]
+
+		newID, err := client.Copy(latest.Sum, dst)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s copied to %s with version ID %s\n", src, dst, newID.AsHex())
+
 	} else if srcRemote && !dstRemote {
 		// Copying from Iota source to local destination (download)
 		dstEx, err := homedir.Expand(dst)
@@ -86,7 +101,7 @@ func uploadFile(client *iotafs.Client, c *cli.Context) error {
 	return nil
 }
 
-func listFiles(client *iotafs.Client, c *cli.Context) error {
+func ls(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
 	if args.Len() != 1 {
 		return fmt.Errorf("only 1 argument expected")
@@ -109,7 +124,7 @@ func listFiles(client *iotafs.Client, c *cli.Context) error {
 
 func humanBytes(size uint64) string {
 	if size < 1024 {
-		return fmt.Sprintf("%d B", size)
+		return fmt.Sprintf("%5.1d B  ", size)
 	}
 	s := float64(size) / 1024
 	if s < 1024 {
@@ -176,13 +191,13 @@ func main() {
 					Value: "zstd",
 				},
 			},
-			Action: makeAction(uploadFile),
+			Action: makeAction(cp),
 		},
 		{
 			Name:      "ls",
 			Usage:     "List files",
 			UsageText: "iota ls <pattern>",
-			Action:    makeAction(listFiles),
+			Action:    makeAction(ls),
 		},
 	}
 
