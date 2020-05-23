@@ -26,7 +26,7 @@ const (
 type handler func(*iotafs.Client, *cli.Context) error
 
 func getLatestVersion(client *iotafs.Client, name string) (iotafs.FileInfo, error) {
-	versions, err := client.HeadFile(name, 1)
+	versions, err := client.Head(name, 1)
 	if err != nil {
 		return iotafs.FileInfo{}, err
 	}
@@ -64,7 +64,32 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		// TODO: allow user to specify version with --version flag
 		dstEx, err := homedir.Expand(dst)
 		if err != nil {
-			return fmt.Errorf("invalid path %q", dst)
+			return fmt.Errorf("invalid path %s", dst)
+		}
+
+		// Check that the directory specified by dst exists
+		info, err := os.Stat(dstEx)
+		if os.IsNotExist(err) {
+			dir := filepath.Dir(dstEx)
+			info, err := os.Stat(dir)
+			if os.IsNotExist(err) {
+				return fmt.Errorf("invalid path %s: directory does not exist", dst)
+			}
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("invalid path %s: directory does not exist", dir)
+			}
+		} else if err != nil {
+			return err
+		} else {
+			if info.IsDir() {
+				// The user has not explicitly specified a filename. Set it to the
+				// base name of the remote file
+				dstEx = filepath.Join(dstEx, filepath.Base(src))
+			}
+			// dstEx exists and is a file. It will be overwritten
 		}
 
 		latest, err := getLatestVersion(client, src)
@@ -72,6 +97,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 			return err
 		}
 
+		fmt.Printf("Download %s -> %s\n", src, dstEx)
 		if err := client.Download(latest.Sum, dstEx); err != nil {
 			return err
 		}
@@ -178,7 +204,7 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	}
 	pattern := args.Get(0)
 
-	res, err := client.ListFiles(pattern)
+	res, err := client.List(pattern)
 	if err != nil {
 		return err
 	}
@@ -203,7 +229,7 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 		if c.Bool("all-versions") {
 			limit = 1000 // TODO: pagination
 		}
-		versions, err := client.HeadFile(name, limit)
+		versions, err := client.Head(name, limit)
 		if err != nil {
 			return err
 		}

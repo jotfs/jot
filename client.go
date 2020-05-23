@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -313,9 +314,12 @@ func (p *packer) addChunk(data []byte, sum sum.Sum, mode CompressMode) error {
 	return p.builder.append(data, sum, mode)
 }
 
-func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
+func (c *Client) List(prefix string) ([]FileInfo, error) {
 	ctx := context.Background()
-	files, err := c.iclient.ListFiles(ctx, &pb.Prefix{Prefix: prefix})
+	files, err := c.iclient.List(ctx, &pb.Prefix{Prefix: prefix})
+	if isNetworkError(err) {
+		return nil, c.networkError()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -337,11 +341,11 @@ func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
 	return infos, nil
 }
 
-func (c *Client) HeadFile(name string, limit uint64) ([]FileInfo, error) {
+func (c *Client) Head(name string, limit uint64) ([]FileInfo, error) {
 	// TODO: implement pagination
 
 	ctx := context.Background()
-	files, err := c.iclient.HeadFile(ctx, &pb.HeadFileRequest{Name: name, Limit: limit})
+	files, err := c.iclient.Head(ctx, &pb.HeadRequest{Name: name, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
@@ -492,4 +496,20 @@ func (c *Client) Delete(fileID sum.Sum) error {
 	// TODO: return NotFound if twirp.NotFoundError
 	_, err := c.iclient.Delete(ctx, &pb.FileID{Sum: fileID[:]})
 	return err
+}
+
+// isNetworkError checks if an error is returned because the client cannot connect to
+// the server.
+func isNetworkError(e error) bool {
+	if e == nil {
+		return false
+	}
+	if strings.Contains(e.Error(), "failed to do request") {
+		return true
+	}
+	return false
+}
+
+func (c *Client) networkError() error {
+	return fmt.Errorf("unable to connect to host %s", c.host.Host)
 }
