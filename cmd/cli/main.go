@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -22,7 +26,7 @@ const (
 type handler func(*iotafs.Client, *cli.Context) error
 
 func getLatestVersion(client *iotafs.Client, name string) (iotafs.FileInfo, error) {
-	versions, err := client.HeadFile(name)
+	versions, err := client.HeadFile(name, 1)
 	if err != nil {
 		return iotafs.FileInfo{}, err
 	}
@@ -42,7 +46,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 	dst, dstRemote := isIotaLocation(args.Get(1))
 
 	if srcRemote && dstRemote {
-		// Copying from one Iota location to another
+		// Copying from one IotaFS location to another
 		// TODO: allow user to specify version with --version flag
 		latest, err := getLatestVersion(client, src)
 		if err != nil {
@@ -55,7 +59,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		fmt.Printf("%s copied to %s with version ID %s\n", src, dst, newID.AsHex())
 
 	} else if srcRemote && !dstRemote {
-		// Copying from Iota source to local destination (download)
+		// Copying from IotaFS source to local destination (download)
 		// TODO: check destination directory exists
 		// TODO: allow user to specify version with --version flag
 		dstEx, err := homedir.Expand(dst)
@@ -73,7 +77,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		}
 	} else if !srcRemote && dstRemote {
 		// Copying from local source to Iota destination (upload)
-
+		src := filepath.Clean(src)
 		srcEx, err := homedir.Expand(src)
 		if err != nil {
 			return fmt.Errorf("invalid path %q", src)
@@ -84,9 +88,12 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("invalid path %q", src)
 		}
+
 		if info.IsDir() {
-			// TODO: check that the --recursive flag is set
-			return fmt.Errorf("%s is a directory. Please use the --recursive flag", src)
+			if c.Bool("recursive") {
+				return uploadRecursive(c.Context, client, srcEx, dst)
+			}
+			return uploadDir(c.Context, client, srcEx, dst, iotafs.CompressZstd)
 		}
 
 		fmt.Printf("Uploading %s to %s\n", src, dst)
@@ -95,16 +102,72 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("unable to open %s: %v", src, err)
 		}
+		defer f.Close()
 		err = client.UploadWithContext(c.Context, f, dst, iotafs.CompressZstd)
 		if err != nil {
 			return err
 		}
-
 	} else {
-		// Local source & destination -- error
 		return fmt.Errorf("at least one of <src> or <dst> must be an iota:// location")
 	}
 
+	return nil
+}
+
+func uploadFile(ctx context.Context, client *iotafs.Client, src string, dst string) error {
+	f, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("unable to open %s: %v", src, err)
+	}
+	return client.UploadWithContext(ctx, f, dst, iotafs.CompressZstd)
+}
+
+// uploadRecursive recursively uploads the contents of a local directory.
+func uploadRecursive(ctx context.Context, client *iotafs.Client, srcDir string, dstDir string) error {
+	if strings.HasSuffix(srcDir, "..") {
+		return errors.New("src cannot end in \"..\"")
+	}
+	err := filepath.Walk(srcDir, func(src string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(srcDir, src)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(dstDir, rel)
+		fmt.Printf("%s -> %s\n", src, dst)
+		return nil
+	})
+	return err
+}
+
+// uploadDir uploads the contents of a local directory.
+func uploadDir(ctx context.Context, client *iotafs.Client, srcDir string, dstDir string, mode iotafs.CompressMode) error {
+	entries, err := ioutil.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(srcDir, entry.Name())
+		dst := filepath.Join(dstDir, entry.Name())
+		fmt.Printf("%s -> %s\n", src, dst)
+		f, err := os.Open(src)
+		if err != nil {
+			return err
+		}
+		err = client.UploadWithContext(ctx, f, dst, mode)
+		err = mergeErrors(err, f.Close())
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -119,10 +182,12 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	format := "%-25s  %9s  %-8s  %s\n"
+	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
 	for _, row := range res {
 		ts := row.CreatedAt.Local().Format(time.RFC3339)
 		s := row.Sum.AsHex()[:8]
-		fmt.Printf("%s%11s  %s  %s\n", ts, humanBytes(row.Size), row.Name, s)
+		fmt.Printf(format, ts, humanBytes(row.Size), s, row.Name)
 	}
 
 	return nil
@@ -131,18 +196,27 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 func rm(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
 
-	// TODO: implement --all-versions flag
 	// TODO: implement --version flag (only one arg allowed in this case)
 
 	for _, name := range args.Slice() {
-		latest, err := getLatestVersion(client, name)
+		limit := uint64(1)
+		if c.Bool("all-versions") {
+			limit = 1000 // TODO: pagination
+		}
+		versions, err := client.HeadFile(name, limit)
 		if err != nil {
 			return err
 		}
-		if err := client.Delete(latest.Sum); err != nil {
-			return err
+		if len(versions) == 0 {
+			return fmt.Errorf("file %s not found", name)
 		}
-		fmt.Printf("Deleted %s\n", name)
+		for i := range versions {
+			v := versions[i]
+			if err := client.Delete(v.Sum); err != nil {
+				return err
+			}
+			fmt.Printf("Deleted %s %s\n", name, v.Sum.AsHex()[:8])
+		}
 	}
 
 	return nil
@@ -157,7 +231,7 @@ func writeErrorf(format string, args ...interface{}) {
 
 func humanBytes(size uint64) string {
 	if size < kiB {
-		return fmt.Sprintf("%5.1d B", size)
+		return fmt.Sprintf("%5.1d B  ", size)
 	}
 	if size < miB {
 		return fmt.Sprintf("%5.1f KiB", float64(size)/kiB)
@@ -190,6 +264,19 @@ func toSentence(s string) string {
 	return s
 }
 
+func mergeErrors(e error, minor error) error {
+	if e == nil && minor == nil {
+		return nil
+	}
+	if e == nil {
+		return minor
+	}
+	if minor == nil {
+		return e
+	}
+	return fmt.Errorf("%w; %v", e, minor)
+}
+
 func main() {
 
 	client, err := iotafs.New("http://localhost:6776")
@@ -212,27 +299,39 @@ func main() {
 	app.Commands = []*cli.Command{
 		{
 			Name:      "cp",
-			Usage:     "Copy a file to / from Iota",
+			Usage:     "copy files to / from IotaFS",
 			UsageText: "iota cp <src> <dst>",
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:  "compression",
 					Value: "zstd",
 				},
+				&cli.BoolFlag{
+					Name:    "recursive",
+					Aliases: []string{"r", "R"},
+					Usage:   "copy directory recursively",
+				},
 			},
 			Action: makeAction(cp),
 		},
 		{
 			Name:      "ls",
-			Usage:     "List files",
+			Usage:     "list files",
 			UsageText: "iota ls <pattern>",
 			Action:    makeAction(ls),
 		},
 		{
 			Name:      "rm",
-			Usage:     "Remove files",
+			Usage:     "remove files",
 			UsageText: "iota rm <file>...",
-			Action:    makeAction(rm),
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:  "all-versions",
+					Usage: "remove all versions",
+					Value: false,
+				},
+			},
+			Action: makeAction(rm),
 		},
 	}
 

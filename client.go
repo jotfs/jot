@@ -62,7 +62,7 @@ func New(host string) (*Client, error) {
 }
 
 // UploadWithContext uploads a new file with a given name.
-func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode compressMode) error {
+func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode CompressMode) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -301,7 +301,7 @@ func (p *packer) flush() error {
 }
 
 // addChunk adds a chunk to a packfile owned by the packer.
-func (p *packer) addChunk(data []byte, sum sum.Sum, mode compressMode) error {
+func (p *packer) addChunk(data []byte, sum sum.Sum, mode CompressMode) error {
 	if p.builder.size()+uint64(len(data)) > maxPackfileSize {
 		if err := p.flush(); err != nil {
 			return err
@@ -322,7 +322,6 @@ func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
 
 	infos := make([]FileInfo, len(files.Infos))
 	for i, info := range files.Infos {
-		fmt.Printf("%x\n", info.Sum)
 		s, err := sum.FromBytes(info.Sum)
 		if err != nil {
 			return nil, err
@@ -338,17 +337,18 @@ func (c *Client) ListFiles(prefix string) ([]FileInfo, error) {
 	return infos, nil
 }
 
-func (c *Client) HeadFile(name string) ([]FileInfo, error) {
+func (c *Client) HeadFile(name string, limit uint64) ([]FileInfo, error) {
 	// TODO: implement pagination
 
 	ctx := context.Background()
-	files, err := c.iclient.HeadFile(ctx, &pb.HeadFileRequest{Name: name, Limit: 1000})
+	files, err := c.iclient.HeadFile(ctx, &pb.HeadFileRequest{Name: name, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
 
 	infos := make([]FileInfo, len(files.Info))
-	for i, info := range files.Info {
+	for i := range files.Info {
+		info := files.Info[i]
 		s, err := sum.FromBytes(info.Sum)
 		if err != nil {
 			return nil, err
