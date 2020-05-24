@@ -52,15 +52,14 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		newID, err := client.Copy(latest.Sum, dst)
+		fmt.Printf("copy: %s -> %s\n", src, dst)
+		_, err = client.Copy(latest.Sum, dst)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s copied to %s with version ID %s\n", src, dst, newID.AsHex())
 
 	} else if srcRemote && !dstRemote {
 		// Copying from IotaFS source to local destination (download)
-		// TODO: check destination directory exists
 		// TODO: allow user to specify version with --version flag
 		dstEx, err := homedir.Expand(dst)
 		if err != nil {
@@ -97,7 +96,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 			return err
 		}
 
-		fmt.Printf("Download %s -> %s\n", src, dstEx)
+		fmt.Printf("download: %s -> %s\n", src, dstEx)
 		if err := client.Download(latest.Sum, dstEx); err != nil {
 			return err
 		}
@@ -109,7 +108,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 			return fmt.Errorf("invalid path %q", src)
 		}
 
-		// Check that the file exists
+		// Check that the file / directory exists
 		info, err := os.Stat(srcEx)
 		if err != nil {
 			return fmt.Errorf("invalid path %q", src)
@@ -119,20 +118,11 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 			if c.Bool("recursive") {
 				return uploadRecursive(c.Context, client, srcEx, dst)
 			}
-			return uploadDir(c.Context, client, srcEx, dst, iotafs.CompressZstd)
+			return uploadDir(c.Context, client, srcEx, dst, iotafs.CompressNone)
 		}
 
-		fmt.Printf("Uploading %s to %s\n", src, dst)
+		return uploadFile(c.Context, client, srcEx, dst)
 
-		f, err := os.Open(src)
-		if err != nil {
-			return fmt.Errorf("unable to open %s: %v", src, err)
-		}
-		defer f.Close()
-		err = client.UploadWithContext(c.Context, f, dst, iotafs.CompressZstd)
-		if err != nil {
-			return err
-		}
 	} else {
 		return fmt.Errorf("at least one of <src> or <dst> must be an iota:// location")
 	}
@@ -145,7 +135,9 @@ func uploadFile(ctx context.Context, client *iotafs.Client, src string, dst stri
 	if err != nil {
 		return fmt.Errorf("unable to open %s: %v", src, err)
 	}
-	return client.UploadWithContext(ctx, f, dst, iotafs.CompressZstd)
+	defer f.Close()
+	fmt.Printf("upload: %s -> %s\n", src, dst)
+	return client.UploadWithContext(ctx, f, dst, iotafs.CompressNone)
 }
 
 // uploadRecursive recursively uploads the contents of a local directory.
@@ -165,8 +157,7 @@ func uploadRecursive(ctx context.Context, client *iotafs.Client, srcDir string, 
 			return err
 		}
 		dst := filepath.Join(dstDir, rel)
-		fmt.Printf("%s -> %s\n", src, dst)
-		return nil
+		return uploadFile(ctx, client, src, dst)
 	})
 	return err
 }
@@ -183,16 +174,7 @@ func uploadDir(ctx context.Context, client *iotafs.Client, srcDir string, dstDir
 		}
 		src := filepath.Join(srcDir, entry.Name())
 		dst := filepath.Join(dstDir, entry.Name())
-		fmt.Printf("%s -> %s\n", src, dst)
-		f, err := os.Open(src)
-		if err != nil {
-			return err
-		}
-		err = client.UploadWithContext(ctx, f, dst, mode)
-		err = mergeErrors(err, f.Close())
-		if err != nil {
-			return err
-		}
+		return uploadFile(ctx, client, src, dst)
 	}
 	return nil
 }
@@ -233,15 +215,12 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		if len(versions) == 0 {
-			return fmt.Errorf("file %s not found", name)
-		}
 		for i := range versions {
 			v := versions[i]
+			fmt.Printf("delete: %s %s\n", name, v.Sum.AsHex()[:8])
 			if err := client.Delete(v.Sum); err != nil {
 				return err
 			}
-			fmt.Printf("Deleted %s %s\n", name, v.Sum.AsHex()[:8])
 		}
 	}
 

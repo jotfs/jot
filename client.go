@@ -91,52 +91,46 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	}
 
 	sums := make([][]byte, 0)
+	cache := newCache(5 * defaultCDCOpts.MaxSize)
 
 	// Upload all new chunks in the file as packfiles to the server
 	err = func() error {
 		defer close(packFiles) // ensure the uploader goroutine terminates
-		batch := make([]sum.Sum, batchSize)
 		eof := false
 		for i := 0; ; i++ {
 			chunk, err := chunker.Next()
 			if err == io.EOF {
 				eof = true
-				batch = batch[:i]
 			} else if err != nil {
 				return err
 			}
 
-			if i == batchSize || eof {
-				// Check which chunks in the batch need to be added to a packfile
-				resp, err := c.iclient.ChunksExist(ctx, &pb.ChunksExistRequest{Sums: sumsToBytes(batch)})
+			if eof || !cache.canSave(chunk.Data) {
+				// Check which chunks in the cache need to be added to a packfile
+				resp, err := c.iclient.ChunksExist(ctx, &pb.ChunksExistRequest{Sums: sumsToBytes(cache.sums)})
 				if err != nil {
 					return err
 				}
-				for j, sum := range batch {
-					data, err := popChunk(dir, sum)
-					if err != nil {
-						return err
-					}
+				for j, sum := range cache.sums {
 					if resp.Exists[j] {
 						continue
 					}
+					data := cache.getChunk(sum)
 					if err := packer.addChunk(data, sum, mode); err != nil {
 						return err
 					}
 				}
-				i = 0 // start a new batch
+				cache.clear()
 			}
 			if eof {
 				break
 			}
 
 			s := sum.Compute(chunk.Data)
-			batch[i] = s
-			sums = append(sums, s[:])
-
-			if err := saveChunk(dir, chunk.Data, s); err != nil {
+			if err := cache.saveChunk(chunk.Data, s); err != nil {
 				return err
 			}
+			sums = append(sums, s[:])
 		}
 
 		return packer.flush() // send any remaining data to the uploader
@@ -159,6 +153,57 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	}
 
 	return nil
+}
+
+type location struct {
+	size   int
+	offset int
+}
+
+type cache struct {
+	cursor int
+	buf    []byte
+	sums   []sum.Sum
+	chunks map[sum.Sum]location
+}
+
+func newCache(size int) *cache {
+	return &cache{0, make([]byte, size), make([]sum.Sum, 0), make(map[sum.Sum]location)}
+}
+
+func (c *cache) canSave(data []byte) bool {
+	if len(c.buf)-c.cursor < len(data) {
+		return false
+	}
+	return true
+}
+
+func (c *cache) saveChunk(data []byte, s sum.Sum) error {
+	if !c.canSave(data) {
+		return fmt.Errorf("unable to save chunk of size %d into cache", len(data))
+	}
+	if _, ok := c.chunks[s]; ok {
+		return nil
+	}
+
+	n := len(data)
+	copy(c.buf[c.cursor:c.cursor+n], data)
+	c.chunks[s] = location{size: n, offset: c.cursor}
+	c.cursor += n
+	c.sums = append(c.sums, s)
+
+	return nil
+}
+
+func (c *cache) getChunk(s sum.Sum) []byte {
+	loc := c.chunks[s]
+	return c.buf[loc.offset : loc.offset+loc.size]
+}
+
+func (c *cache) clear() {
+	c.cursor = 0
+	c.chunks = make(map[sum.Sum]location)
+	c.sums = c.sums[:0]
 }
 
 // uploadPackfiles listens for packfiles on a channel and uploads them. It signals

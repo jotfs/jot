@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"hash"
 
-	"golang.org/x/crypto/blake2b"
+	"github.com/zeebo/blake3"
 )
 
 // Size is the byte-size of a checksum
@@ -26,7 +26,11 @@ func FromBytes(b []byte) (Sum, error) {
 
 // Compute returns the checksum of a byte slice.
 func Compute(data []byte) Sum {
-	return blake2b.Sum256(data)
+	h := blake3.New()
+	h.Write(data)
+	var s Sum
+	copy(s[:], h.Sum(nil))
+	return s
 }
 
 // AsHex returns the hex-encoded representation of s.
@@ -50,10 +54,7 @@ type Hash struct {
 
 // New returns a new Hash.
 func New() (*Hash, error) {
-	h, err := blake2b.New256(nil)
-	if err != nil {
-		return nil, err
-	}
+	h := blake3.New()
 	return &Hash{h}, nil
 }
 

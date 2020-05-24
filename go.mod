@@ -13,6 +13,7 @@ require (
 	github.com/stretchr/testify v1.5.1
 	github.com/twitchtv/twirp v5.10.1+incompatible
 	github.com/urfave/cli/v2 v2.2.0
-	golang.org/x/crypto v0.0.0-20200510223506-06a226fb4e37
+	github.com/zeebo/blake3 v0.0.3
+	golang.org/x/sys v0.0.0-20200519105757-fe76b779f299 // indirect
 	google.golang.org/protobuf v1.22.0
 )
