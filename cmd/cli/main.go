@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/iotafs/iotafs-go"
 	"github.com/mitchellh/go-homedir"
@@ -205,19 +203,30 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
 
 	// TODO: implement --version flag (only one arg allowed in this case)
+	// TODO: handle trailing slash
 
 	for _, name := range args.Slice() {
-		limit := uint64(1)
-		if c.Bool("all-versions") {
-			limit = 1000 // TODO: pagination
+		var versions []iotafs.FileInfo
+		var err error
+		if c.Bool("recursive") {
+			versions, err = client.List(name)
+			if err != nil {
+				return err
+			}
+		} else {
+			limit := uint64(1)
+			if c.Bool("all-versions") {
+				limit = 1000 // TODO: pagination
+			}
+			versions, err = client.Head(name, limit)
+			if err != nil {
+				return err
+			}
 		}
-		versions, err := client.Head(name, limit)
-		if err != nil {
-			return err
-		}
+
 		for i := range versions {
 			v := versions[i]
-			fmt.Printf("delete: %s %s\n", name, v.Sum.AsHex()[:8])
+			fmt.Printf("delete: %s %s\n", v.Name, v.Sum.AsHex()[:8])
 			if err := client.Delete(v.Sum); err != nil {
 				return err
 			}
@@ -225,13 +234,6 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 	}
 
 	return nil
-}
-
-func writeErrorf(format string, args ...interface{}) {
-	_, err := os.Stderr.WriteString(fmt.Sprintf(format, args...))
-	if err != nil {
-		panic(err)
-	}
 }
 
 func humanBytes(size uint64) string {
@@ -254,39 +256,11 @@ func isIotaLocation(s string) (string, bool) {
 	return s, false
 }
 
-func toSentence(s string) string {
-	if s == "" {
-		return s
-	}
-	r, size := utf8.DecodeRuneInString(s)
-	if r != utf8.RuneError {
-		s = string(unicode.ToUpper(r)) + s[size:]
-	}
-	r, _ = utf8.DecodeLastRuneInString(s)
-	if r != utf8.RuneError && r != rune('.') {
-		s = s + "."
-	}
-	return s
-}
-
-func mergeErrors(e error, minor error) error {
-	if e == nil && minor == nil {
-		return nil
-	}
-	if e == nil {
-		return minor
-	}
-	if minor == nil {
-		return e
-	}
-	return fmt.Errorf("%w; %v", e, minor)
-}
-
 func main() {
 
 	client, err := iotafs.New("http://localhost:6776")
 	if err != nil {
-		os.Stderr.WriteString(err.Error() + "\n")
+		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 		return
 	}
@@ -294,7 +268,11 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "IotaFS Client"
 	app.ExitErrHandler = func(c *cli.Context, err error) {
-		os.Stderr.WriteString("Error: " + toSentence(err.Error()) + "\n")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	makeAction := func(h handler) cli.ActionFunc {
@@ -334,6 +312,11 @@ func main() {
 					Name:  "all-versions",
 					Usage: "remove all versions",
 					Value: false,
+				},
+				&cli.BoolFlag{
+					Name:    "recursive",
+					Aliases: []string{"r", "R"},
+					Usage:   "remove recursively",
 				},
 			},
 			Action: makeAction(rm),
