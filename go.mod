@@ -7,7 +7,7 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/golang/protobuf v1.4.1
 	github.com/google/uuid v1.1.1
-	github.com/iotafs/fastcdc-go v0.0.0-20200504133734-7002f61329bb
+	github.com/iotafs/fastcdc-go v0.0.0-20200524174345-ec34b0b6157b
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/stretchr/testify v1.5.1
