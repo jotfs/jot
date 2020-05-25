@@ -27,6 +27,8 @@ import (
 // ErrNotFound is returned when a file with a given ID cannot be found on the remote.
 var ErrNotFound = errors.New("not found")
 
+var networkError = errors.New("unable to connect to host")
+
 const (
 	kiB             = 1024
 	miB             = 1024 * kiB
@@ -355,65 +357,175 @@ func (p *packer) addChunk(data []byte, sum sum.Sum, mode CompressMode) error {
 	return p.builder.append(data, sum, mode)
 }
 
-func (c *Client) List(prefix string) ([]FileInfo, error) {
-	ctx := context.Background()
-	files, err := c.iclient.List(ctx, &pb.Prefix{Prefix: prefix})
-	if isNetworkError(err) {
-		return nil, fmt.Errorf("unable to connect to host %s", c.host.Host)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	infos := make([]FileInfo, len(files.Infos))
-	for i, info := range files.Infos {
-		s, err := sum.FromBytes(info.Sum)
-		if err != nil {
-			return nil, err
-		}
-		infos[i] = FileInfo{
-			Name:      info.Name,
-			CreatedAt: time.Unix(0, info.CreatedAt),
-			Size:      info.Size,
-			Sum:       s,
-		}
-	}
-
-	return infos, nil
-}
-
-func (c *Client) Head(name string, limit uint64) ([]FileInfo, error) {
-	// TODO: implement pagination
-
-	ctx := context.Background()
-	files, err := c.iclient.Head(ctx, &pb.HeadRequest{Name: name, Limit: limit})
-	if err != nil {
-		return nil, err
-	}
-
-	infos := make([]FileInfo, len(files.Info))
-	for i := range files.Info {
-		info := files.Info[i]
-		s, err := sum.FromBytes(info.Sum)
-		if err != nil {
-			return nil, err
-		}
-		infos[i] = FileInfo{
-			Name:      info.Name,
-			CreatedAt: time.Unix(0, info.CreatedAt),
-			Size:      info.Size,
-			Sum:       s,
-		}
-	}
-
-	return infos, nil
-}
-
 type FileInfo struct {
 	Name      string
 	CreatedAt time.Time
 	Size      uint64
 	Sum       sum.Sum
+}
+
+// FileIterator is an iterator over a stream of FileInfo returned by List and Head.
+type FileIterator interface {
+
+	// Next returns the next FileInfo from the iterator. It returns io.EOF when the end
+	// of the iterator is reached. The FileInfo is always invalid if the error is not nil.
+	Next() (FileInfo, error)
+}
+
+// IteratorOpts specify the options for an iterator.
+type IteratorOpts struct {
+	// Limit is the maximum number of values to return from the iterator. Unlimited if
+	// unspecified.
+	Limit uint64
+
+	// BatchSize is the maximum number of values to retrieve at a time from the remote.
+	// Defaults to 1000 if unspecified.
+	BatchSize uint64
+
+	// Ascending, if set to true, returns values from the iterator in chronological
+	// order. False by default, in which case values are returned in reverse-chronological
+	// order
+	Ascending bool
+}
+
+func (c *Client) List(prefix string, opts *IteratorOpts) FileIterator {
+	itOpts := defaultIteratorOpts(opts)
+	return &listIterator{opts: itOpts, prefix: prefix, iclient: c.iclient}
+}
+
+type listIterator struct {
+	opts    IteratorOpts
+	prefix  string
+	iclient pb.IotaFS
+
+	nextPageToken int64
+	values        []*pb.FileInfo
+	cursor        int
+	count         uint64
+}
+
+func (it *listIterator) Next() (FileInfo, error) {
+	if it.opts.Limit != 0 && it.count == it.opts.Limit {
+		return FileInfo{}, io.EOF
+	}
+	if it.cursor == len(it.values) {
+		if it.nextPageToken == -1 {
+			return FileInfo{}, io.EOF
+		}
+
+		// Get a new batch
+		ctx := context.Background()
+		resp, err := it.iclient.List(ctx, &pb.ListRequest{
+			Prefix:        it.prefix,
+			Limit:         it.opts.BatchSize,
+			NextPageToken: it.nextPageToken,
+		})
+		if isNetworkError(err) {
+			return FileInfo{}, networkError
+		}
+		if err != nil {
+			return FileInfo{}, err
+		}
+
+		it.values = resp.Info
+		it.nextPageToken = resp.NextPageToken
+		it.cursor = 0
+	}
+	if len(it.values) == 0 {
+		return FileInfo{}, io.EOF
+	}
+
+	v := it.values[it.cursor]
+	s, err := sum.FromBytes(v.Sum)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt), Size: v.Size, Sum: s}
+
+	it.cursor++
+	it.count++
+
+	return info, nil
+}
+
+type headIterator struct {
+	opts    IteratorOpts
+	name    string
+	iclient pb.IotaFS
+
+	nextPageToken int64
+	values        []*pb.FileInfo
+	cursor        int
+	count         uint64
+}
+
+func (it *headIterator) Next() (FileInfo, error) {
+	if it.opts.Limit != 0 && it.count == it.opts.Limit {
+		return FileInfo{}, io.EOF
+	}
+	if it.cursor == len(it.values) {
+		if it.nextPageToken == -1 {
+			return FileInfo{}, io.EOF
+		}
+
+		// Get a new batch
+		ctx := context.Background()
+		resp, err := it.iclient.Head(ctx, &pb.HeadRequest{
+			Name:          it.name,
+			Limit:         it.opts.BatchSize,
+			NextPageToken: it.nextPageToken,
+		})
+		if isNetworkError(err) {
+			return FileInfo{}, networkError
+		}
+		if err != nil {
+			return FileInfo{}, err
+		}
+
+		it.values = resp.Info
+		it.nextPageToken = resp.NextPageToken
+		it.cursor = 0
+	}
+	if len(it.values) == 0 {
+		return FileInfo{}, io.EOF
+	}
+
+	v := it.values[it.cursor]
+	s, err := sum.FromBytes(v.Sum)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt), Size: v.Size, Sum: s}
+
+	it.cursor++
+	it.count++
+
+	return info, nil
+}
+
+func defaultIteratorOpts(opts *IteratorOpts) IteratorOpts {
+	var itOpts IteratorOpts
+	itOpts.BatchSize = 1000
+	if opts != nil {
+		itOpts.Ascending = opts.Ascending
+		itOpts.Limit = opts.Limit
+		if opts.BatchSize != 0 {
+			itOpts.BatchSize = opts.BatchSize
+		}
+	}
+	return itOpts
+}
+
+func (c *Client) Head(name string, opts *IteratorOpts) FileIterator {
+	itOpts := defaultIteratorOpts(opts)
+	return &headIterator{opts: itOpts, name: name, iclient: c.iclient}
+}
+
+func min(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // Download retrieves a file and writes it to dst. Returns iotafs.ErrNotFound if the
@@ -552,8 +664,4 @@ func isNetworkError(e error) bool {
 		return true
 	}
 	return false
-}
-
-func (c *Client) networkError() error {
-	return fmt.Errorf("unable to connect to host %s", c.host.Host)
 }

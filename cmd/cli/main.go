@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -25,14 +26,15 @@ const (
 type handler func(*iotafs.Client, *cli.Context) error
 
 func getLatestVersion(client *iotafs.Client, name string) (iotafs.FileInfo, error) {
-	versions, err := client.Head(name, 1)
-	if err != nil {
-		return iotafs.FileInfo{}, err
-	}
-	if len(versions) == 0 {
+	it := client.Head(name, &iotafs.IteratorOpts{Limit: 1})
+	info, err := it.Next()
+	if err == io.EOF {
 		return iotafs.FileInfo{}, fmt.Errorf("file %s not found", name)
 	}
-	return versions[0], nil
+	if err != nil {
+		return iotafs.FileInfo{}, nil
+	}
+	return info, nil
 }
 
 func cp(client *iotafs.Client, c *cli.Context) error {
@@ -47,6 +49,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 	if srcRemote && dstRemote {
 		// Copying from one IotaFS location to another
 		// TODO: allow user to specify version with --version flag
+		// TODO: allow --all-versions flag
 		latest, err := getLatestVersion(client, src)
 		if err != nil {
 			return err
@@ -257,16 +260,20 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	}
 	pattern := args.Get(0)
 
-	res, err := client.List(pattern)
-	if err != nil {
-		return err
-	}
+	it := client.List(pattern, nil)
 	format := "%-25s  %9s  %-8s  %s\n"
 	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
-	for _, row := range res {
-		ts := row.CreatedAt.Local().Format(time.RFC3339)
-		s := row.Sum.AsHex()[:8]
-		fmt.Printf(format, ts, humanBytes(row.Size), s, row.Name)
+	for {
+		info, err := it.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		ts := info.CreatedAt.Local().Format(time.RFC3339)
+		s := info.Sum.AsHex()[:8]
+		fmt.Printf(format, ts, humanBytes(info.Size), s, info.Name)
 	}
 
 	return nil
@@ -279,28 +286,26 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 	// TODO: handle trailing slash
 
 	for _, name := range args.Slice() {
-		var versions []iotafs.FileInfo
-		var err error
+		var it iotafs.FileIterator
 		if c.Bool("recursive") {
-			versions, err = client.List(name)
-			if err != nil {
-				return err
-			}
+			it = client.List(name, nil)
+		} else if c.Bool("all-versions") { 
+			it = client.Head(name, nil)
 		} else {
-			limit := uint64(1)
-			if c.Bool("all-versions") {
-				limit = 1000 // TODO: pagination
-			}
-			versions, err = client.Head(name, limit)
-			if err != nil {
-				return err
-			}
+			// Just the latest version
+			it = client.Head(name, &iotafs.IteratorOpts{Limit: 1})
 		}
 
-		for i := range versions {
-			v := versions[i]
-			fmt.Printf("delete: %s %s\n", v.Name, v.Sum.AsHex()[:8])
-			if err := client.Delete(v.Sum); err != nil {
+		for {
+			info, err := it.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Printf("delete: %s %s\n", info.Name, info.Sum.AsHex()[:8])
+			if err := client.Delete(info.Sum); err != nil {
 				return err
 			}
 		}
