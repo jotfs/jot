@@ -13,6 +13,7 @@ import (
 	"github.com/iotafs/iotafs-go"
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -95,9 +96,13 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		}
 
 		fmt.Printf("download: %s -> %s\n", src, dstEx)
-		if err := client.Download(latest.Sum, dstEx); err != nil {
+		f, err := os.OpenFile(dstEx, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
 			return err
 		}
+		err = client.Download(latest.Sum, f)
+		return mergeErrors(err, f.Close())
+
 	} else if !srcRemote && dstRemote {
 		// Copying from local source to Iota destination (upload)
 		src := filepath.Clean(src)
@@ -114,9 +119,9 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 
 		if info.IsDir() {
 			if c.Bool("recursive") {
-				return uploadRecursive(c.Context, client, srcEx, dst)
+				return uploadRecursive(c, client, srcEx, dst)
 			}
-			return uploadDir(c.Context, client, srcEx, dst, iotafs.CompressNone)
+			return uploadDir(c, client, srcEx, dst)
 		}
 
 		return uploadFile(c.Context, client, srcEx, dst)
@@ -139,10 +144,34 @@ func uploadFile(ctx context.Context, client *iotafs.Client, src string, dst stri
 }
 
 // uploadRecursive recursively uploads the contents of a local directory.
-func uploadRecursive(ctx context.Context, client *iotafs.Client, srcDir string, dstDir string) error {
+func uploadRecursive(c *cli.Context, client *iotafs.Client, srcDir string, dstDir string) error {
 	if strings.HasSuffix(srcDir, "..") {
 		return errors.New("src cannot end in \"..\"")
 	}
+
+	type job struct {
+		src string
+		dst string
+	}
+	queue := make(chan job)
+
+	var g errgroup.Group
+	numWorkers := c.Int("concurrency")
+	if numWorkers <= 0 {
+		return errors.New("option --concurrency must be at least 1")
+	}
+	for i := 0; i < numWorkers; i++ {
+		g.Go(func() error {
+			for job := range queue {
+				err := uploadFile(c.Context, client, job.src, job.dst)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
 	err := filepath.Walk(srcDir, func(src string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -155,26 +184,70 @@ func uploadRecursive(ctx context.Context, client *iotafs.Client, srcDir string, 
 			return err
 		}
 		dst := filepath.Join(dstDir, rel)
-		return uploadFile(ctx, client, src, dst)
+		queue <- job{src, dst}
+		return nil
 	})
-	return err
+
+	close(queue)
+
+	return mergeErrors(g.Wait(), err)
 }
 
 // uploadDir uploads the contents of a local directory.
-func uploadDir(ctx context.Context, client *iotafs.Client, srcDir string, dstDir string, mode iotafs.CompressMode) error {
+func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir string) error {
 	entries, err := ioutil.ReadDir(srcDir)
 	if err != nil {
 		return err
 	}
+
+	type job struct {
+		src string
+		dst string
+	}
+	queue := make(chan job)
+
+	numWorkers := c.Int("concurrency")
+	if numWorkers <= 0 {
+		return errors.New("option --concurrency must be at least 1")
+	}
+	var g errgroup.Group
+	for i := 0; i < numWorkers; i++ {
+		g.Go(func() error {
+			for job := range queue {
+				err := uploadFile(c.Context, client, job.src, job.dst)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		src := filepath.Join(srcDir, entry.Name())
 		dst := filepath.Join(dstDir, entry.Name())
-		return uploadFile(ctx, client, src, dst)
+		queue <- job{src, dst}
 	}
-	return nil
+
+	close(queue)
+
+	return g.Wait()
+}
+
+func mergeErrors(e error, minor error) error {
+	if e == nil && minor == nil {
+		return nil
+	}
+	if e == nil {
+		return minor
+	}
+	if minor == nil {
+		return e
+	}
+	return fmt.Errorf("%w; %v", e, minor)
 }
 
 func ls(client *iotafs.Client, c *cli.Context) error {
@@ -293,6 +366,10 @@ func main() {
 					Name:    "recursive",
 					Aliases: []string{"r", "R"},
 					Usage:   "copy directory recursively",
+				},
+				&cli.IntFlag{
+					Name:  "concurrency",
+					Value: 3,
 				},
 			},
 			Action: makeAction(cp),

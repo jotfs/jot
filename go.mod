@@ -14,6 +14,7 @@ require (
 	github.com/twitchtv/twirp v5.10.1+incompatible
 	github.com/urfave/cli/v2 v2.2.0
 	github.com/zeebo/blake3 v0.0.3
+	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a
 	golang.org/x/sys v0.0.0-20200519105757-fe76b779f299 // indirect
 	google.golang.org/protobuf v1.22.0
 )
