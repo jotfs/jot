@@ -260,7 +260,7 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	}
 	pattern := args.Get(0)
 
-	it := client.List(pattern, nil)
+	it := client.ListFilter(pattern, c.String("exclude"), c.String("include"), nil)
 	format := "%-25s  %9s  %-8s  %s\n"
 	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
 	for {
@@ -288,8 +288,8 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 	for _, name := range args.Slice() {
 		var it iotafs.FileIterator
 		if c.Bool("recursive") {
-			it = client.List(name, nil)
-		} else if c.Bool("all-versions") { 
+			it = client.ListFilter(name, c.String("exclude"), c.String("include"), nil)
+		} else if c.Bool("all-versions") {
 			it = client.Head(name, nil)
 		} else {
 			// Just the latest version
@@ -363,18 +363,26 @@ func main() {
 			Usage:     "copy files to / from IotaFS",
 			UsageText: "iota cp <src> <dst>",
 			Flags: []cli.Flag{
-				&cli.StringFlag{
-					Name:  "compression",
-					Value: "zstd",
-				},
 				&cli.BoolFlag{
 					Name:    "recursive",
 					Aliases: []string{"r", "R"},
 					Usage:   "copy directory recursively",
 				},
+				&cli.StringFlag{
+					Name:  "exclude",
+					Usage: "exclude files matching the given pattern",
+				},
+				&cli.StringFlag{
+					Name:  "include",
+					Usage: "don't exclude files matching the given pattern",
+				},
 				&cli.IntFlag{
 					Name:  "concurrency",
 					Value: 3,
+				},
+				&cli.StringFlag{
+					Name:  "compression",
+					Value: "zstd",
 				},
 			},
 			Action: makeAction(cp),
@@ -384,6 +392,16 @@ func main() {
 			Usage:     "list files",
 			UsageText: "iota ls <pattern>",
 			Action:    makeAction(ls),
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:  "exclude",
+					Usage: "exclude files matching the given pattern",
+				},
+				&cli.StringFlag{
+					Name:  "include",
+					Usage: "don't exclude files matching the given pattern",
+				},
+			},
 		},
 		{
 			Name:      "rm",
@@ -399,6 +417,14 @@ func main() {
 					Name:    "recursive",
 					Aliases: []string{"r", "R"},
 					Usage:   "remove recursively",
+				},
+				&cli.StringFlag{
+					Name:  "exclude",
+					Usage: "exclude files matching the given pattern",
+				},
+				&cli.StringFlag{
+					Name:  "include",
+					Usage: "don't exclude files matching the given pattern",
 				},
 			},
 			Action: makeAction(rm),

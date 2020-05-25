@@ -388,15 +388,24 @@ type IteratorOpts struct {
 	Ascending bool
 }
 
-func (c *Client) List(prefix string, opts *IteratorOpts) FileIterator {
+func (c *Client) ListFilter(prefix string, exclude string, include string, opts *IteratorOpts) FileIterator {
 	itOpts := defaultIteratorOpts(opts)
-	return &listIterator{opts: itOpts, prefix: prefix, iclient: c.iclient}
+	return &listIterator{
+		opts: itOpts, prefix: prefix, iclient: c.iclient, exclude: exclude, include: include,
+	}
+}
+
+func (c *Client) List(prefix string, opts *IteratorOpts) FileIterator {
+	return c.ListFilter(prefix, "", "", opts)
 }
 
 type listIterator struct {
 	opts    IteratorOpts
 	prefix  string
 	iclient pb.IotaFS
+
+	include string
+	exclude string
 
 	nextPageToken int64
 	values        []*pb.FileInfo
@@ -419,6 +428,8 @@ func (it *listIterator) Next() (FileInfo, error) {
 			Prefix:        it.prefix,
 			Limit:         it.opts.BatchSize,
 			NextPageToken: it.nextPageToken,
+			Exclude:       it.exclude,
+			Include:       it.include,
 		})
 		if isNetworkError(err) {
 			return FileInfo{}, networkError
