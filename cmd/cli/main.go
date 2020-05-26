@@ -158,7 +158,7 @@ func uploadRecursive(c *cli.Context, client *iotafs.Client, srcDir string, dstDi
 	}
 	queue := make(chan job)
 
-	var g errgroup.Group
+	g, ctx := errgroup.WithContext(c.Context)
 	numWorkers := c.Int("concurrency")
 	if numWorkers <= 0 {
 		return errors.New("option --concurrency must be at least 1")
@@ -187,8 +187,12 @@ func uploadRecursive(c *cli.Context, client *iotafs.Client, srcDir string, dstDi
 			return err
 		}
 		dst := filepath.Join(dstDir, rel)
-		queue <- job{src, dst}
-		return nil
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case queue <- job{src, dst}:
+			return nil
+		}
 	})
 
 	close(queue)
@@ -209,11 +213,11 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 	}
 	queue := make(chan job)
 
+	g, ctx := errgroup.WithContext(c.Context)
 	numWorkers := c.Int("concurrency")
 	if numWorkers <= 0 {
 		return errors.New("option --concurrency must be at least 1")
 	}
-	var g errgroup.Group
 	for i := 0; i < numWorkers; i++ {
 		g.Go(func() error {
 			for job := range queue {
@@ -232,7 +236,16 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 		}
 		src := filepath.Join(srcDir, entry.Name())
 		dst := filepath.Join(dstDir, entry.Name())
-		queue <- job{src, dst}
+		var err error
+		select {
+		case  <-ctx.Done():
+			err = ctx.Err()
+		case queue <- job{src, dst}:
+			err = nil
+		}
+		if err != nil {
+			break
+		}
 	}
 
 	close(queue)

@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/iotafs/fastcdc-go"
 	"github.com/twitchtv/twirp"
+	"golang.org/x/sync/errgroup"
 
 	pb "github.com/iotafs/iotafs-go/internal/protos/upload"
 	"github.com/iotafs/iotafs-go/internal/sum"
@@ -51,8 +52,7 @@ type Client struct {
 	cacheDir string
 }
 
-// New returns a new Client. If applicable, host should include the port number, for
-// example, "example.com:6776".
+// New returns a new Client. The host should include the port number.
 func New(host string) (*Client, error) {
 	url, err := url.Parse(host)
 	if err != nil {
@@ -73,16 +73,25 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	defer cancel()
 
 	// Start uploading packfiles on a background goroutine
+	var g errgroup.Group
 	packFiles := make(chan string)
-	done := make(chan error)
-	go c.uploadPackfiles(ctx, packFiles, done)
+	g.Go(func() error {
+		for name := range packFiles {
+			err := c.uploadPackfile(ctx, name)
+			err = mergeErrors(err, os.Remove(name))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 
 	// Create a directory to cache data during the upload
 	id, err := uuid.NewRandom()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(c.cacheDir, id.String())
+	dir := filepath.Join(c.cacheDir, "iota-"+id.String())
 	if err := os.Mkdir(dir, 0744); err != nil {
 		return err
 	}
@@ -146,9 +155,7 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 		return err
 	}
 
-	// Wait for the uploader to complete.
-	err = <-done
-	if err != nil {
+	if err = g.Wait(); err != nil {
 		return err
 	}
 
@@ -220,63 +227,52 @@ func (c *cache) clear() {
 	c.sums = c.sums[:0]
 }
 
-// uploadPackfiles listens for packfiles on a channel and uploads them. It signals
-// completion (a nil error) or failure on the done channel.
-func (c *Client) uploadPackfiles(ctx context.Context, files <-chan string, done chan<- error) {
+// uploadPackfile uploads a packfile to the server. The basename of the filepath
+// must be the hex-encoded checksum of the file contents.
+func (c *Client) uploadPackfile(ctx context.Context, fpath string) error {
 	u := c.host
 	u.Path = path.Join(u.Path, "packfile")
 	url := u.String()
 
-	upload := func(name string) error {
-		// Get the packfile checksum from its file name
-		s, err := sum.FromHex(filepath.Base(name))
-		if err != nil {
-			return err
-		}
-
-		// Get the packfile from the cache
-		f, err := os.Open(name)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil {
-			return err
-		}
-
-		// Construct the request
-		req, err := http.NewRequestWithContext(ctx, "POST", url, f)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("x-iota-checksum", base64.StdEncoding.EncodeToString(s[:]))
-		req.ContentLength = info.Size()
-
-		// Upload the file
-		resp, err := c.hclient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated {
-			b, _ := ioutil.ReadAll(resp.Body)
-			msg := string(b)
-			err = fmt.Errorf("chunk upload failed (%d): %s", resp.StatusCode, msg)
-			return err
-		}
-
-		return nil
+	// Get the packfile checksum from its file name
+	s, err := sum.FromHex(filepath.Base(fpath))
+	if err != nil {
+		return err
 	}
 
-	for name := range files {
-		err := upload(name)
-		err = mergeErrors(err, os.Remove(name))
-		if err != nil {
-			done <- err
-		}
+	// Get the packfile from the cache
+	f, err := os.Open(fpath)
+	if err != nil {
+		return err
 	}
-	done <- nil
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	// Construct the request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, f)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-iota-checksum", base64.StdEncoding.EncodeToString(s[:]))
+	req.ContentLength = info.Size()
+
+	// Upload the file
+	resp, err := c.hclient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := ioutil.ReadAll(resp.Body)
+		msg := string(b)
+		err = fmt.Errorf("chunk upload failed (%d): %s", resp.StatusCode, msg)
+		return err
+	}
+
+	return nil
 }
 
 func sumsToBytes(sums []sum.Sum) [][]byte {
