@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/iotafs/iotafs-go"
+
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sync/errgroup"
@@ -238,7 +239,7 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 		dst := filepath.Join(dstDir, entry.Name())
 		var err error
 		select {
-		case  <-ctx.Done():
+		case <-ctx.Done():
 			err = ctx.Err()
 		case queue <- job{src, dst}:
 			err = nil
@@ -347,17 +348,48 @@ func isIotaLocation(s string) (string, bool) {
 	return s, false
 }
 
-func main() {
+var client *iotafs.Client
 
-	client, err := iotafs.New("http://localhost:6776")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-		return
-	}
+func main() {
 
 	app := cli.NewApp()
 	app.Name = "IotaFS Client"
+	app.Flags = []cli.Flag{
+		&cli.StringFlag{
+			Name:  "config",
+			Usage: "path to config file",
+		},
+		&cli.StringFlag{
+			Name:  "profile",
+			Usage: "config profile to use",
+			Value: "default",
+		},
+	}
+
+	app.Before = func(c *cli.Context) error {
+		// Load the config and initialize the client
+		if isOneOf(c.Args().First(), []string{"help", "h"}) {
+			// Return early if it's the help subcommand
+			return nil
+		}
+		cfgName := c.String("config")
+		if cfgName == "" {
+			cfgName = getConfigFile()
+		}
+		if cfgName == "" {
+			return errors.New("unable to find config file")
+		}
+
+		profileName := c.String("profile")
+		p, err := loadConfig(cfgName, profileName)
+		if err != nil {
+			return err
+		}
+
+		client, err = iotafs.New(p.Endpoint)
+		return err
+	}
+
 	app.ExitErrHandler = func(c *cli.Context, err error) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
