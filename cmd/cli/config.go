@@ -13,7 +13,7 @@ import (
 )
 
 type config struct {
-	Profiles []profile
+	Profile []profile
 }
 
 type profile struct {
@@ -31,7 +31,7 @@ func loadConfig(cfgName string, profileName string) (profile, error) {
 
 	b, err := ioutil.ReadFile(cfgName)
 	if err != nil {
-		return profile{}, fmt.Errorf("unable to read config file %s: %v", cfgName, err)
+		return profile{}, fmt.Errorf("unable to read config: %v", err)
 	}
 
 	var cfg config
@@ -39,7 +39,7 @@ func loadConfig(cfgName string, profileName string) (profile, error) {
 		return profile{}, fmt.Errorf("unable to parse config file %s: %v", cfgName, err)
 	}
 
-	for _, p := range cfg.Profiles {
+	for _, p := range cfg.Profile {
 		if p.Name == profileName {
 			return p, nil
 		}
@@ -48,6 +48,9 @@ func loadConfig(cfgName string, profileName string) (profile, error) {
 }
 
 func getConfigFile() string {
+	if name := os.Getenv("IOTA_CONFIG_FILE"); name != "" {
+		return name
+	}
 	if isOneOf(runtime.GOOS, []string{"linux", "darwin", "freebsd", "openbsd", "netbsd"}) {
 		home, err := homedir.Dir()
 		if err != nil {
