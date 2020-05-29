@@ -28,7 +28,7 @@ import (
 // ErrNotFound is returned when a file with a given ID cannot be found on the remote.
 var ErrNotFound = errors.New("not found")
 
-var networkError = errors.New("unable to connect to host")
+var errNetwork = errors.New("unable to connect to host")
 
 const (
 	kiB             = 1024
@@ -36,20 +36,13 @@ const (
 	maxPackfileSize = 128 * miB
 )
 
-var defaultCDCOpts = fastcdc.Options{
-	MinSize:    256 * kiB,
-	MaxSize:    8 * miB,
-	NormalSize: 1 * miB,
-	SmallBits:  22,
-	LargeBits:  18,
-}
-
 // Client implements methods to interact with an IotaFS server.
 type Client struct {
 	host     url.URL
 	hclient  *http.Client
 	iclient  pb.IotaFS
 	cacheDir string
+	opts     *fastcdc.Options
 }
 
 // New returns a new Client. The host should include the port number.
@@ -99,13 +92,22 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 
 	packer, err := newPacker(dir, packFiles)
 
-	chunker, err := fastcdc.NewChunker(r, defaultCDCOpts)
+	// Get the chunker options from the server if we haven't done so already
+	if c.opts == nil {
+		opts, err := c.getChunkerOptions(ctx)
+		if err != nil {
+			return fmt.Errorf("retrieving chunker options: %w", err)
+		}
+		c.opts = opts
+	}
+
+	chunker, err := fastcdc.NewChunker(r, *c.opts)
 	if err != nil {
 		return err
 	}
 
 	fileSums := make([][]byte, 0)
-	cache := newCache(5 * defaultCDCOpts.MaxSize) // TODO: make cache size parameter
+	cache := newCache(5 * c.opts.MaxSize) // TODO: make cache size parameter
 
 	// Add new chunks from the file to one or more packfiles, and send the resulting
 	// packfiles to the uploader
@@ -428,7 +430,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 			Include:       it.include,
 		})
 		if isNetworkError(err) {
-			return FileInfo{}, networkError
+			return FileInfo{}, errNetwork
 		}
 		if err != nil {
 			return FileInfo{}, err
@@ -483,7 +485,7 @@ func (it *headIterator) Next() (FileInfo, error) {
 			NextPageToken: it.nextPageToken,
 		})
 		if isNetworkError(err) {
-			return FileInfo{}, networkError
+			return FileInfo{}, errNetwork
 		}
 		if err != nil {
 			return FileInfo{}, err
@@ -659,6 +661,20 @@ func (c *Client) Delete(file sum.Sum) error {
 		return err
 	}
 	return err
+}
+
+// getChunkerOptions gets the chunking options from the server.
+func (c *Client) getChunkerOptions(ctx context.Context) (*fastcdc.Options, error) {
+	params, err := c.iclient.GetChunkerParams(ctx, &pb.Empty{})
+	if err != nil {
+		return nil, err
+	}
+	return &fastcdc.Options{
+		MinSize:       int(params.MinChunkSize),
+		AverageSize:   int(params.AvgChunkSize),
+		MaxSize:       int(params.MaxChunkSize),
+		Normalization: int(params.Normalization),
+	}, nil
 }
 
 // isNetworkError checks if an error is returned because the client cannot connect to

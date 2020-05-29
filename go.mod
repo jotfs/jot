@@ -7,7 +7,7 @@ require (
 	github.com/DataDog/zstd v1.4.5
 	github.com/golang/protobuf v1.4.2
 	github.com/google/uuid v1.1.1
-	github.com/iotafs/fastcdc-go v0.0.0-20200526120210-47b68bd21860
+	github.com/iotafs/fastcdc-go v0.1.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/stretchr/testify v1.5.1
