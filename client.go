@@ -22,7 +22,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	pb "github.com/iotafs/iotafs-go/internal/protos/upload"
-	"github.com/iotafs/iotafs-go/internal/sum"
 )
 
 // ErrNotFound is returned when a file with a given ID cannot be found on the remote.
@@ -143,7 +142,7 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 				break
 			}
 
-			s := sum.Compute(chunk.Data)
+			s := computeSum(chunk.Data)
 			if err := cache.saveChunk(chunk.Data, s); err != nil {
 				return err
 			}
@@ -180,13 +179,13 @@ type location struct {
 type cache struct {
 	cursor int
 	buf    []byte
-	sums   []sum.Sum
-	chunks map[sum.Sum]location
+	sums   []Sum
+	chunks map[Sum]location
 }
 
 // newCache creates a new cache with a given buffer size.
 func newCache(size int) *cache {
-	return &cache{0, make([]byte, size), make([]sum.Sum, 0), make(map[sum.Sum]location)}
+	return &cache{0, make([]byte, size), make([]Sum, 0), make(map[Sum]location)}
 }
 
 // hasCapacity returns true if the cache has enough room to store data.
@@ -198,7 +197,7 @@ func (c *cache) hasCapacity(data []byte) bool {
 }
 
 // saveChunk copies chunk data with a given checksum to the cache.
-func (c *cache) saveChunk(data []byte, s sum.Sum) error {
+func (c *cache) saveChunk(data []byte, s Sum) error {
 	if !c.hasCapacity(data) {
 		return fmt.Errorf("unable to save chunk of size %d into cache", len(data))
 	}
@@ -217,7 +216,7 @@ func (c *cache) saveChunk(data []byte, s sum.Sum) error {
 
 // getChunk returns chunk data from the cache with a given checksum. Will panic if a
 // chunk with the provided checksum has not already been saved.
-func (c *cache) getChunk(s sum.Sum) []byte {
+func (c *cache) getChunk(s Sum) []byte {
 	loc := c.chunks[s]
 	return c.buf[loc.offset : loc.offset+loc.size]
 }
@@ -225,7 +224,7 @@ func (c *cache) getChunk(s sum.Sum) []byte {
 // clear removes all data from the cache.
 func (c *cache) clear() {
 	c.cursor = 0
-	c.chunks = make(map[sum.Sum]location)
+	c.chunks = make(map[Sum]location)
 	c.sums = c.sums[:0]
 }
 
@@ -237,7 +236,7 @@ func (c *Client) uploadPackfile(ctx context.Context, fpath string) error {
 	url := u.String()
 
 	// Get the packfile checksum from its file name
-	s, err := sum.FromHex(filepath.Base(fpath))
+	s, err := sumFromHex(filepath.Base(fpath))
 	if err != nil {
 		return err
 	}
@@ -277,7 +276,7 @@ func (c *Client) uploadPackfile(ctx context.Context, fpath string) error {
 	return nil
 }
 
-func sumsToBytes(sums []sum.Sum) [][]byte {
+func sumsToBytes(sums []Sum) [][]byte {
 	b := make([][]byte, len(sums))
 	for i, s := range sums {
 		b[i] = s[:]
@@ -343,7 +342,7 @@ func (p *packer) flush() error {
 }
 
 // addChunk adds a chunk to a packfile owned by the packer.
-func (p *packer) addChunk(data []byte, sum sum.Sum, mode CompressMode) error {
+func (p *packer) addChunk(data []byte, sum Sum, mode CompressMode) error {
 	if p.builder.size()+uint64(len(data)) > maxPackfileSize {
 		if err := p.flush(); err != nil {
 			return err
@@ -359,7 +358,7 @@ type FileInfo struct {
 	Name      string
 	CreatedAt time.Time
 	Size      uint64
-	Sum       sum.Sum
+	Sum       Sum
 }
 
 // FileIterator is an iterator over a stream of FileInfo returned by List and Head.
@@ -445,7 +444,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 	}
 
 	v := it.values[it.cursor]
-	s, err := sum.FromBytes(v.Sum)
+	s, err := sumFromBytes(v.Sum)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -500,7 +499,7 @@ func (it *headIterator) Next() (FileInfo, error) {
 	}
 
 	v := it.values[it.cursor]
-	s, err := sum.FromBytes(v.Sum)
+	s, err := sumFromBytes(v.Sum)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -539,7 +538,7 @@ func min(a, b uint64) uint64 {
 
 // Download retrieves a file and writes it to dst. Returns iotafs.ErrNotFound if the
 // file does not exist.
-func (c *Client) Download(file sum.Sum, dst io.Writer) error {
+func (c *Client) Download(file Sum, dst io.Writer) error {
 	ctx := context.Background()
 	resp, err := c.iclient.Download(ctx, &pb.FileID{Sum: file[:]})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
@@ -601,7 +600,7 @@ func (c *Client) downloadSection(dst io.Writer, s *pb.Section) error {
 			return fmt.Errorf("reading block: %w", err)
 		}
 
-		h, err := sum.New()
+		h, err := newHash()
 		if err != nil {
 			return err
 		}
@@ -634,24 +633,24 @@ func mergeErrors(e error, minor error) error {
 
 // Copy copies a file from one IotaFS location to another IotaFS location and returns
 // the ID of the new file. Returns iotafs.ErrNotFound if the source file does not exist.
-func (c *Client) Copy(src sum.Sum, dst string) (sum.Sum, error) {
+func (c *Client) Copy(src Sum, dst string) (Sum, error) {
 	ctx := context.Background()
 	fileID, err := c.iclient.Copy(ctx, &pb.CopyRequest{SrcId: src[:], Dst: dst})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
-		return sum.Sum{}, ErrNotFound
+		return Sum{}, ErrNotFound
 	}
 	if err != nil {
-		return sum.Sum{}, err
+		return Sum{}, err
 	}
-	s, err := sum.FromBytes(fileID.Sum)
+	s, err := sumFromBytes(fileID.Sum)
 	if err != nil {
-		return sum.Sum{}, err
+		return Sum{}, err
 	}
 	return s, nil
 }
 
 // Delete deletes a file. Returns iotafs.ErrNotFound if the file does not exist.
-func (c *Client) Delete(file sum.Sum) error {
+func (c *Client) Delete(file Sum) error {
 	ctx := context.Background()
 	_, err := c.iclient.Delete(ctx, &pb.FileID{Sum: file[:]})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {

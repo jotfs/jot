@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/iotafs/iotafs-go/internal/sum"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,11 +13,11 @@ func TestPackfileBuilder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, builder)
 
-	aSum := sum.Compute(a)
+	aSum := computeSum(a)
 	err = builder.append(a, aSum, CompressNone)
 	assert.NoError(t, err)
 
-	bSum := sum.Compute(b)
+	bSum := computeSum(b)
 	err = builder.append(b, bSum, CompressZstd)
 	assert.NoError(t, err)
 

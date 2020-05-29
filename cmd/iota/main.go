@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/iotafs/iotafs-go"
-	"github.com/iotafs/iotafs-go/internal/sum"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
@@ -259,7 +258,7 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 	return g.Wait()
 }
 
-func downloadFile(ctx context.Context, client *iotafs.Client, src sum.Sum, dst string) error {
+func downloadFile(ctx context.Context, client *iotafs.Client, src iotafs.Sum, dst string) error {
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return fmt.Errorf("unable to open %s: %v", src, err)
@@ -288,7 +287,7 @@ func downloadRecursive(c *cli.Context, client *iotafs.Client, prefix string, dst
 
 	// job stores the checksum of a file to download and the local dst to save it to
 	type job struct {
-		src sum.Sum
+		src iotafs.Sum
 		dst string
 	}
 	queue := make(chan job)
@@ -458,7 +457,8 @@ var client *iotafs.Client
 func main() {
 
 	app := cli.NewApp()
-	app.Name = "IotaFS Client"
+	app.Name = "Iota"
+	app.Usage = "A CLI tool for working with an IotaFS server"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:  "config",
