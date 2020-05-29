@@ -21,7 +21,7 @@ import (
 	"github.com/twitchtv/twirp"
 	"golang.org/x/sync/errgroup"
 
-	pb "github.com/iotafs/iotafs-go/internal/protos/upload"
+	pb "github.com/iotafs/iotafs-go/internal/protos"
 )
 
 // ErrNotFound is returned when a file with a given ID cannot be found on the remote.

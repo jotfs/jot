@@ -1,4 +1,3 @@
 protos:
-	cp ../iotafs-server/internal/protos/upload/*.proto internal/protos/upload
-	protoc internal/protos/upload/upload.proto --twirp_out=. --go_out=.
-
+	cp ../iotafs-server/internal/protos/*.proto internal/protos
+	protoc internal/protos/api.proto --twirp_out=. --go_out=.
