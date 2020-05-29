@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/iotafs/iotafs-go"
+	"github.com/iotafs/iotafs-go/internal/sum"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
@@ -67,6 +68,10 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		dstEx, err := homedir.Expand(dst)
 		if err != nil {
 			return fmt.Errorf("invalid path %s", dst)
+		}
+
+		if c.Bool("recursive") {
+			return downloadRecursive(c, client, src, dst)
 		}
 
 		// Check that the directory specified by dst exists
@@ -160,11 +165,11 @@ func uploadRecursive(c *cli.Context, client *iotafs.Client, srcDir string, dstDi
 	queue := make(chan job)
 
 	g, ctx := errgroup.WithContext(c.Context)
-	numWorkers := c.Int("concurrency")
-	if numWorkers <= 0 {
+	numWorkers := c.Uint("concurrency")
+	if numWorkers < 0 {
 		return errors.New("option --concurrency must be at least 1")
 	}
-	for i := 0; i < numWorkers; i++ {
+	for i := uint(0); i < numWorkers; i++ {
 		g.Go(func() error {
 			for job := range queue {
 				err := uploadFile(c.Context, client, job.src, job.dst)
@@ -254,6 +259,95 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 	return g.Wait()
 }
 
+func downloadFile(ctx context.Context, client *iotafs.Client, src sum.Sum, dst string) error {
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("unable to open %s: %v", src, err)
+	}
+	err = client.Download(src, f)
+	return mergeErrors(err, f.Close())
+}
+
+// downloadRecursive recursively downloads the contents of a directory.
+func downloadRecursive(c *cli.Context, client *iotafs.Client, prefix string, dstDir string) error {
+	// Create the source directory if it doesn't exist
+	exists, err := dirExists(dstDir)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := os.MkdirAll(dstDir, 0744); err != nil {
+			return fmt.Errorf("making directory: %v", err)
+		}
+	}
+
+	numWorkers := c.Int("concurrency")
+	if numWorkers <= 0 {
+		return errors.New("option --concurrency must be at least 1")
+	}
+
+	// job stores the checksum of a file to download and the local dst to save it to
+	type job struct {
+		src sum.Sum
+		dst string
+	}
+	queue := make(chan job)
+
+	// Launch numWorkers goroutines which execute jobs taken from the work queue
+	ctx, cancel := context.WithCancel(c.Context)
+	defer cancel()
+	g, gctx := errgroup.WithContext(ctx)
+	for i := 0; i < numWorkers; i++ {
+		g.Go(func() error {
+			for job := range queue {
+				// create the directory for the file if it doesn't exist
+				dir := filepath.Dir(job.dst)
+				exists, err := dirExists(dir)
+				if err != nil {
+					return err
+				}
+				if !exists {
+					if err = os.MkdirAll(dir, 0744); err != nil {
+						return fmt.Errorf("making directory %s: %v", dir, err)
+					}
+				}
+
+				err = downloadFile(gctx, client, job.src, job.dst)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	// Add each file matching the prefix to the download queue
+	it := client.List(prefix, nil)
+	for {
+		info, err := it.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// Cancel any downloads currently running
+			cancel()
+			return err
+		}
+
+		dst := filepath.Join(dstDir, filepath.FromSlash(info.Name))
+		select {
+		case <-gctx.Done():
+			break
+		case queue <- job{src: info.Sum, dst: dst}:
+			fmt.Printf("download: %s -> %s\n", info.Name, dst)
+		}
+	}
+
+	close(queue)
+
+	return g.Wait()
+}
+
 func mergeErrors(e error, minor error) error {
 	if e == nil && minor == nil {
 		return nil
@@ -326,6 +420,17 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 	}
 
 	return nil
+}
+
+func dirExists(name string) (bool, error) {
+	info, err := os.Stat(name)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 func humanBytes(size uint64) string {
@@ -421,7 +526,7 @@ func main() {
 					Name:  "include",
 					Usage: "don't exclude files matching the given pattern",
 				},
-				&cli.IntFlag{
+				&cli.UintFlag{
 					Name:  "concurrency",
 					Value: 3,
 				},
