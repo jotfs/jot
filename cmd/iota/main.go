@@ -27,7 +27,7 @@ const (
 type handler func(*iotafs.Client, *cli.Context) error
 
 func getLatestVersion(client *iotafs.Client, name string) (iotafs.FileInfo, error) {
-	it := client.Head(name, &iotafs.IteratorOpts{Limit: 1})
+	it := client.Head(name, &iotafs.HeadOpts{Limit: 1})
 	info, err := it.Next()
 	if err == io.EOF {
 		return iotafs.FileInfo{}, fmt.Errorf("file %s not found", name)
@@ -148,7 +148,8 @@ func uploadFile(ctx context.Context, client *iotafs.Client, src string, dst stri
 	}
 	defer f.Close()
 	fmt.Printf("upload: %s -> %s\n", src, dst)
-	return client.UploadWithContext(ctx, f, dst, iotafs.CompressNone)
+	_, err = client.UploadWithContext(ctx, f, dst, iotafs.CompressNone)
+	return err
 }
 
 // uploadRecursive recursively uploads the contents of a local directory.
@@ -366,8 +367,9 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 		return fmt.Errorf("only 1 argument expected")
 	}
 	pattern := args.Get(0)
-
-	it := client.ListFilter(pattern, c.String("exclude"), c.String("include"), nil)
+	
+	opts := &iotafs.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
+	it := client.List(pattern, opts)
 	format := "%-25s  %9s  %-8s  %s\n"
 	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
 	for {
@@ -395,12 +397,13 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 	for _, name := range args.Slice() {
 		var it iotafs.FileIterator
 		if c.Bool("recursive") {
-			it = client.ListFilter(name, c.String("exclude"), c.String("include"), nil)
+			opts := &iotafs.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
+			it = client.List(name, opts)
 		} else if c.Bool("all-versions") {
 			it = client.Head(name, nil)
 		} else {
 			// Just the latest version
-			it = client.Head(name, &iotafs.IteratorOpts{Limit: 1})
+			it = client.Head(name, &iotafs.HeadOpts{Limit: 1})
 		}
 
 		for {

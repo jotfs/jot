@@ -45,22 +45,23 @@ type Client struct {
 }
 
 // New returns a new Client. The host should include the port number.
-func New(host string) (*Client, error) {
-	url, err := url.Parse(host)
+func New(endpoint string) (*Client, error) {
+	url, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse host: %w", err)
 	}
 
 	hclient := &http.Client{}
 	return &Client{
-		host:    *url,
-		hclient: hclient,
-		iclient: pb.NewIotaFSProtobufClient(host, hclient),
+		host:     *url,
+		hclient:  hclient,
+		iclient:  pb.NewIotaFSProtobufClient(endpoint, hclient),
+		cacheDir: os.TempDir(),
 	}, nil
 }
 
 // UploadWithContext uploads a new file with a given name.
-func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode CompressMode) error {
+func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode CompressMode) (Sum, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -81,11 +82,11 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	// Create a directory to cache data during the upload
 	id, err := uuid.NewRandom()
 	if err != nil {
-		return err
+		return Sum{}, err
 	}
 	dir := filepath.Join(c.cacheDir, "iota-"+id.String())
 	if err := os.Mkdir(dir, 0744); err != nil {
-		return err
+		return Sum{}, err
 	}
 	defer os.RemoveAll(dir)
 
@@ -95,14 +96,14 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	if c.opts == nil {
 		opts, err := c.getChunkerOptions(ctx)
 		if err != nil {
-			return fmt.Errorf("retrieving chunker options: %w", err)
+			return Sum{}, fmt.Errorf("retrieving chunker options: %w", err)
 		}
 		c.opts = opts
 	}
 
 	chunker, err := fastcdc.NewChunker(r, *c.opts)
 	if err != nil {
-		return err
+		return Sum{}, err
 	}
 
 	fileSums := make([][]byte, 0)
@@ -153,20 +154,24 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	}()
 	if err != nil {
 		cancel()
-		return err
+		return Sum{}, err
 	}
 
 	if err = g.Wait(); err != nil {
-		return err
+		return Sum{}, err
 	}
 
 	// Create the file
-	_, err = c.iclient.CreateFile(ctx, &pb.File{Name: dst, Sums: fileSums})
+	info, err := c.iclient.CreateFile(ctx, &pb.File{Name: dst, Sums: fileSums})
 	if err != nil {
-		return err
+		return Sum{}, err
+	}
+	sum, err := sumFromBytes(info.Sum)
+	if err != nil {
+		return Sum{}, err
 	}
 
-	return nil
+	return sum, nil
 }
 
 // location stores the size and offset of a chunk of data in the cache.
@@ -369,14 +374,21 @@ type FileIterator interface {
 	Next() (FileInfo, error)
 }
 
-// IteratorOpts specify the options for an iterator.
-type IteratorOpts struct {
+// ListOpts specify the options for List.
+type ListOpts struct {
+	// Exclude will exclude any files matching the glob pattern.
+	Exclude string
+
+	// Include forces inclusion of any files matched by the Exclude pattern. It is
+	// ignored if Exclude is not provided.
+	Include string
+
 	// Limit is the maximum number of values to return from the iterator. Unlimited if
 	// unspecified.
 	Limit uint64
 
 	// BatchSize is the maximum number of values to retrieve at a time from the remote.
-	// Defaults to 1000 if unspecified.
+	// Defaults to 1000.
 	BatchSize uint64
 
 	// Ascending, if set to true, returns values from the iterator in chronological
@@ -385,24 +397,22 @@ type IteratorOpts struct {
 	Ascending bool
 }
 
-func (c *Client) ListFilter(prefix string, exclude string, include string, opts *IteratorOpts) FileIterator {
-	itOpts := defaultIteratorOpts(opts)
-	return &listIterator{
-		opts: itOpts, prefix: prefix, iclient: c.iclient, exclude: exclude, include: include,
+func (c *Client) List(prefix string, opts *ListOpts) FileIterator {
+	// itOpts := defaultIteratorOpts(opts)
+	var lopts ListOpts
+	if opts != nil {
+		lopts = *opts
 	}
-}
-
-func (c *Client) List(prefix string, opts *IteratorOpts) FileIterator {
-	return c.ListFilter(prefix, "", "", opts)
+	if lopts.BatchSize == 0 {
+		lopts.BatchSize = 1000
+	}
+	return &listIterator{opts: lopts, prefix: prefix, iclient: c.iclient}
 }
 
 type listIterator struct {
-	opts    IteratorOpts
+	opts    ListOpts
 	prefix  string
 	iclient pb.IotaFS
-
-	include string
-	exclude string
 
 	nextPageToken int64
 	values        []*pb.FileInfo
@@ -425,8 +435,9 @@ func (it *listIterator) Next() (FileInfo, error) {
 			Prefix:        it.prefix,
 			Limit:         it.opts.BatchSize,
 			NextPageToken: it.nextPageToken,
-			Exclude:       it.exclude,
-			Include:       it.include,
+			Exclude:       it.opts.Exclude,
+			Include:       it.opts.Include,
+			Ascending:     it.opts.Ascending,
 		})
 		if isNetworkError(err) {
 			return FileInfo{}, errNetwork
@@ -448,7 +459,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt), Size: v.Size, Sum: s}
+	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt).UTC(), Size: v.Size, Sum: s}
 
 	it.cursor++
 	it.count++
@@ -456,8 +467,24 @@ func (it *listIterator) Next() (FileInfo, error) {
 	return info, nil
 }
 
+// HeadOpts specify the options for Head.
+type HeadOpts struct {
+	// Limit is the maximum number of values to return from the iterator. Unlimited if
+	// unspecified.
+	Limit uint64
+
+	// BatchSize is the maximum number of values to retrieve at a time from the remote.
+	// Defaults to 1000.
+	BatchSize uint64
+
+	// Ascending, if set to true, returns values from the iterator in chronological
+	// order. False by default, in which case values are returned in reverse-chronological
+	// order
+	Ascending bool
+}
+
 type headIterator struct {
-	opts    IteratorOpts
+	opts    HeadOpts
 	name    string
 	iclient pb.IotaFS
 
@@ -503,7 +530,7 @@ func (it *headIterator) Next() (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt), Size: v.Size, Sum: s}
+	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt).UTC(), Size: v.Size, Sum: s}
 
 	it.cursor++
 	it.count++
@@ -511,29 +538,16 @@ func (it *headIterator) Next() (FileInfo, error) {
 	return info, nil
 }
 
-func defaultIteratorOpts(opts *IteratorOpts) IteratorOpts {
-	var itOpts IteratorOpts
-	itOpts.BatchSize = 1000
+func (c *Client) Head(name string, opts *HeadOpts) FileIterator {
+	// itOpts := defaultIteratorOpts(opts)
+	var hopts HeadOpts
 	if opts != nil {
-		itOpts.Ascending = opts.Ascending
-		itOpts.Limit = opts.Limit
-		if opts.BatchSize != 0 {
-			itOpts.BatchSize = opts.BatchSize
-		}
+		hopts = *opts
 	}
-	return itOpts
-}
-
-func (c *Client) Head(name string, opts *IteratorOpts) FileIterator {
-	itOpts := defaultIteratorOpts(opts)
-	return &headIterator{opts: itOpts, name: name, iclient: c.iclient}
-}
-
-func min(a, b uint64) uint64 {
-	if a < b {
-		return a
+	if hopts.BatchSize == 0 {
+		hopts.BatchSize = 1000
 	}
-	return b
+	return &headIterator{opts: hopts, name: name, iclient: c.iclient}
 }
 
 // Download retrieves a file and writes it to dst. Returns iotafs.ErrNotFound if the
@@ -585,7 +599,7 @@ func (c *Client) downloadSection(dst io.Writer, s *pb.Section) error {
 	if n, err := io.Copy(tmp, resp.Body); err != nil {
 		return err
 	} else if n != int64(length) {
-		return fmt.Errorf("expected %d bytes but only received %d", length, n)
+		return fmt.Errorf("expected %d bytes but received %d", length, n)
 	}
 
 	// Add the data for each chunk to the file, ensuring the checksum matches
