@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -364,14 +365,54 @@ func mergeErrors(e error, minor error) error {
 func ls(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
 	if args.Len() != 1 {
-		return fmt.Errorf("only 1 argument expected")
+		s := strings.Join(args.Slice(), ", ")
+		return fmt.Errorf("expected 1 argument but received %d: %s", args.Len(), s)
 	}
-	pattern := args.Get(0)
-	
-	opts := &iotafs.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
-	it := client.List(pattern, opts)
+	prefix := args.Get(0)
+
 	format := "%-25s  %9s  %-8s  %s\n"
 	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
+
+	if c.Bool("recursive") {
+		opts := &iotafs.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
+		it := client.List(prefix, opts)
+		return lsOutput(it, format)
+	}
+
+	// Non-recursive ls
+	// Get all files inside the directory
+	exclude := path.Join(prefix, "*/*")
+	opts := &iotafs.ListOpts{Exclude: exclude}
+	it := client.List(prefix, opts)
+	lsOutput(it, format)
+
+	// Get all direct child directories
+	dirsSeen := make(map[string]bool, 0)
+	it = client.List(prefix, nil)
+	prefix = cleanPath(prefix) // need to clean for TrimPrefix to work correctly below
+	for {
+		info, err := it.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		p := strings.TrimPrefix(info.Name, prefix)
+		sp := strings.Split(p, "/")
+		if len(sp) > 2 {
+			_, seen := dirsSeen[sp[1]]
+			if !seen {
+				dirsSeen[sp[1]] = true
+				fmt.Printf(format, "", "0 B  ", "DIR", path.Join(prefix, sp[1])+"/")
+			}
+		}
+	}
+	return nil
+}
+
+// lsOutput prints the output from a FileIterator
+func lsOutput(it iotafs.FileIterator, format string) error {
 	for {
 		info, err := it.Next()
 		if err == io.EOF {
@@ -384,8 +425,23 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 		s := info.Sum.AsHex()[:8]
 		fmt.Printf(format, ts, humanBytes(info.Size), s, info.Name)
 	}
-
 	return nil
+}
+
+// cleanPath adds a leading slash if name doesn't already have one, and removes a
+// trailing if present, and all leading and trailing whitespace.
+func cleanPath(name string) string {
+	if name == "" {
+		return name
+	}
+	name = strings.TrimSpace(name)
+	if !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+	if strings.HasSuffix(name, "/") {
+		name = strings.TrimSuffix(name, "/")
+	}
+	return name
 }
 
 func rm(client *iotafs.Client, c *cli.Context) error {
@@ -437,7 +493,7 @@ func dirExists(name string) (bool, error) {
 
 func humanBytes(size uint64) string {
 	if size < kiB {
-		return fmt.Sprintf("%5.1d B  ", size)
+		return fmt.Sprintf("%5.1d B", size)
 	}
 	if size < miB {
 		return fmt.Sprintf("%5.1f KiB", float64(size)/kiB)
@@ -457,11 +513,18 @@ func isIotaLocation(s string) (string, bool) {
 
 var client *iotafs.Client
 
+var description = `
+   Iota will look for its configuration file at $HOME/.iota/config.toml 
+   by default. Alternatively, its path may be specified by setting the 
+   IOTA_CONFIG_FILE environment variable, or with the --config option.
+   The server endpoint URL may be overriden with the --endpoint option.`
+
 func main() {
 
 	app := cli.NewApp()
 	app.Name = "Iota"
 	app.Usage = "A CLI tool for working with an IotaFS server"
+	app.Description = description
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:  "config",
@@ -471,6 +534,10 @@ func main() {
 			Name:  "profile",
 			Usage: "config profile to use",
 			Value: "default",
+		},
+		&cli.StringFlag{
+			Name:  "endpoint",
+			Usage: "set the server endpoint",
 		},
 	}
 
@@ -512,13 +579,14 @@ func main() {
 
 	app.Commands = []*cli.Command{
 		{
-			Name:      "cp",
-			Usage:     "copy files to / from IotaFS",
-			UsageText: "iota cp <src> <dst>",
+			Name:        "cp",
+			Usage:       "copy files to / from IotaFS",
+			UsageText:   "iota cp <src> <dst>",
+			Description: cpDescription,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:    "recursive",
-					Aliases: []string{"r", "R"},
+					Aliases: []string{"r"},
 					Usage:   "copy directory recursively",
 				},
 				&cli.StringFlag{
@@ -531,6 +599,7 @@ func main() {
 				},
 				&cli.UintFlag{
 					Name:  "concurrency",
+					Usage: "max. number of concurrent operations",
 					Value: 3,
 				},
 				&cli.StringFlag{
@@ -543,7 +612,7 @@ func main() {
 		{
 			Name:      "ls",
 			Usage:     "list files",
-			UsageText: "iota ls <pattern>",
+			UsageText: "iota ls <prefix>",
 			Action:    makeAction(ls),
 			Flags: []cli.Flag{
 				&cli.StringFlag{
@@ -554,12 +623,18 @@ func main() {
 					Name:  "include",
 					Usage: "don't exclude files matching the given pattern",
 				},
+				&cli.BoolFlag{
+					Name:    "recursive",
+					Aliases: []string{"r"},
+					Usage:   "list recursively",
+				},
 			},
 		},
 		{
-			Name:      "rm",
-			Usage:     "remove files",
-			UsageText: "iota rm <file>...",
+			Name:        "rm",
+			Usage:       "remove files",
+			UsageText:   "iota rm <file>...",
+			Description: rmDescription,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:  "all-versions",
@@ -568,7 +643,7 @@ func main() {
 				},
 				&cli.BoolFlag{
 					Name:    "recursive",
-					Aliases: []string{"r", "R"},
+					Aliases: []string{"r"},
 					Usage:   "remove recursively",
 				},
 				&cli.StringFlag{
@@ -586,3 +661,56 @@ func main() {
 
 	app.Run(os.Args)
 }
+
+var cpDescription = `
+   At least one of <src> or <dst> must be prefixed with iota:// to
+   signify the operation as an upload, download or copy.
+
+EXAMPLES:
+   
+   Download a single file:
+
+      iota cp iota://images/bird.png ./the_bird.png
+
+   Download recursive (local directories will be created):
+
+      iota cp -r iota://images images
+	  
+   Upload a single file:
+
+      iota cp test.csv iota://data/test.csv  
+
+   Upload recursive:
+
+      iota cp -r datasets/ iota://datasets
+
+   Exclude certain files:
+
+      iota cp -r --exclude "/img/*" --include "/img/a.png" iota:// files/ 
+
+   Copy a file from one Iota location to another:
+
+      iota cp iota://test.csv iota://data/test-copy.csv
+`
+
+var rmDescription = `
+   If versioning is enabled, only the latest version of each matching
+   file will be removed. Set the --all-versions flag to remove all 
+   versions. To recursively remove files, set the --recursive flag.
+
+   WARNING: --recursive will always delete all versions of each file.
+
+EXAMPLES:
+
+   Remove files:
+	  
+      iota rm bird.png img/dog.png
+
+   Remove all files in img/ except those in img/birds:
+
+      iota rm -r --include "img/*" --exclude "img/birds/*" img/
+`
+
+var lsDescription = `
+
+`

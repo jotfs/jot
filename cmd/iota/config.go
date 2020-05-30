@@ -12,6 +12,8 @@ import (
 	"github.com/mitchellh/go-homedir"
 )
 
+const configFileEnvVar = "IOTA_CONFIG_FILE"
+
 type config struct {
 	Profile []profile
 }
@@ -48,7 +50,7 @@ func loadConfig(cfgName string, profileName string) (profile, error) {
 }
 
 func getConfigFile() string {
-	if name := os.Getenv("IOTA_CONFIG_FILE"); name != "" {
+	if name := os.Getenv(configFileEnvVar); name != "" {
 		return name
 	}
 	if isOneOf(runtime.GOOS, []string{"linux", "darwin", "freebsd", "openbsd", "netbsd"}) {
@@ -56,7 +58,7 @@ func getConfigFile() string {
 		if err != nil {
 			return ""
 		}
-		name := filepath.Join(home, ".iota/config.toml")
+		name := filepath.Join(home, ".iota", "config.toml")
 		if checkFile(name) {
 			return name
 		}
