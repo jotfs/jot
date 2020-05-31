@@ -124,7 +124,8 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 
 			if eof || !cache.hasCapacity(chunk.Data) {
 				// Check which chunks in the cache need to be added to a packfile
-				resp, err := c.iclient.ChunksExist(ctx, &pb.ChunksExistRequest{Sums: sumsToBytes(cache.sums)})
+				req := &pb.ChunksExistRequest{Sums: sumsToBytes(cache.sums)}
+				resp, err := c.iclient.ChunksExist(ctx, req)
 				if err != nil {
 					return err
 				}
@@ -283,8 +284,8 @@ func (c *Client) uploadPackfile(ctx context.Context, fpath string) error {
 
 func sumsToBytes(sums []Sum) [][]byte {
 	b := make([][]byte, len(sums))
-	for i, s := range sums {
-		b[i] = s[:]
+	for i := range sums {
+		b[i] = sums[i][:]
 	}
 	return b
 }
