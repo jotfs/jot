@@ -364,11 +364,16 @@ func mergeErrors(e error, minor error) error {
 
 func ls(client *iotafs.Client, c *cli.Context) error {
 	args := c.Args()
-	if args.Len() != 1 {
+	if args.Len() > 1 {
 		s := strings.Join(args.Slice(), ", ")
 		return fmt.Errorf("expected 1 argument but received %d: %s", args.Len(), s)
 	}
-	prefix := args.Get(0)
+	var prefix string
+	if args.Len() == 0 {
+		prefix = "/"
+	} else {
+		prefix = args.Get(0)
+	}
 
 	format := "%-25s  %9s  %-8s  %s\n"
 	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
