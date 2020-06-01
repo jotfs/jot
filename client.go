@@ -565,10 +565,11 @@ func (c *Client) Download(file Sum, dst io.Writer) error {
 
 	// Download the data for each packfile section using the provided URLs, and use
 	// the data to construct the original file.
-	for i, s := range resp.Sections {
-		err := c.downloadSection(dst, s)
+	for i := range resp.Sections {
+		section := resp.Sections[i]
+		err := c.downloadSection(dst, section)
 		if err != nil {
-			return fmt.Errorf("section %d: %w", i, err)
+			return fmt.Errorf("section %d %s: %w", i, section.Url, err)
 		}
 	}
 
@@ -589,7 +590,7 @@ func (c *Client) downloadSection(dst io.Writer, s *pb.Section) error {
 	if err != nil {
 		return err
 	}
-	length := s.RangeEnd - s.RangeStart
+	length := s.RangeEnd - s.RangeStart + 1
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", s.RangeStart, s.RangeEnd))
 
 	resp, err := c.hclient.Do(req)
@@ -621,7 +622,7 @@ func (c *Client) downloadSection(dst io.Writer, s *pb.Section) error {
 		}
 		w := io.MultiWriter(dst, h)
 		if err := block.Mode.decompressStream(w, bytes.NewReader(block.Data)); err != nil {
-			return fmt.Errorf("decompression block: %w", err)
+			return fmt.Errorf("decompressing block: %w", err)
 		}
 
 		s := h.Sum()
