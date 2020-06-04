@@ -23,6 +23,8 @@ type profile struct {
 	Endpoint string `toml:"endpoint"`
 }
 
+// loadConfig loads a profile from a config file. Returns an error if the config file
+// could not be found, or the file does not contain the given profile.
 func loadConfig(cfgName string, profileName string) (profile, error) {
 	if cfgName == "" {
 		cfgName = getConfigFile()
@@ -49,6 +51,7 @@ func loadConfig(cfgName string, profileName string) (profile, error) {
 	return profile{}, fmt.Errorf("profile %q not found in %s", profileName, cfgName)
 }
 
+// getConfigFile returns the location of the CLI config file.
 func getConfigFile() string {
 	if name := os.Getenv(configFileEnvVar); name != "" {
 		return name
@@ -70,6 +73,7 @@ func getConfigFile() string {
 	return ""
 }
 
+// checkFile returns true if path name exists and is not a directory.
 func checkFile(name string) bool {
 	info, err := os.Stat(name)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/iotafs/iotafs-go"
+	"github.com/iotafs/iotafs-go/internal/admin"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
@@ -516,18 +517,13 @@ func isIotaLocation(s string) (string, bool) {
 	return s, false
 }
 
-var client *iotafs.Client
-
-var description = `
-   Iota will look for its configuration file at $HOME/.iota/config.toml 
-   by default. Alternatively, its path may be specified by setting the 
-   IOTA_CONFIG_FILE environment variable, or with the --config option.
-   The server endpoint URL may be overriden with the --endpoint option.`
-
 func main() {
+	var client *iotafs.Client
+	var adminC *admin.Client
+	var endpoint string
 
 	app := cli.NewApp()
-	app.Name = "Iota"
+	app.Name = "iota"
 	app.Usage = "A CLI tool for working with an IotaFS server"
 	app.Description = description
 	app.Flags = []cli.Flag{
@@ -546,27 +542,41 @@ func main() {
 		},
 	}
 
+	// Get the server endpoint, either from the command line option or config file, and
+	// initialize the client
 	app.Before = func(c *cli.Context) error {
-		// Load the config and initialize the client
 		if isOneOf(c.Args().First(), []string{"help", "h"}) {
 			// Return early if it's the help subcommand
 			return nil
 		}
-		cfgName := c.String("config")
-		if cfgName == "" {
-			cfgName = getConfigFile()
-		}
-		if cfgName == "" {
-			return errors.New("unable to find config file")
-		}
-
-		profileName := c.String("profile")
-		p, err := loadConfig(cfgName, profileName)
+		var err error
+		endpoint, err = func() (string, error) {
+			endpoint := c.String("endpoint")
+			if endpoint != "" {
+				return endpoint, nil
+			}
+			cfgName := c.String("config")
+			if cfgName == "" {
+				cfgName = getConfigFile()
+			}
+			if cfgName == "" {
+				return "", errors.New("unable to find config file")
+			}
+			profileName := c.String("profile")
+			profile, err := loadConfig(cfgName, profileName)
+			if err != nil {
+				return "", err
+			}
+			return profile.Endpoint, nil
+		}()
 		if err != nil {
 			return err
 		}
-
-		client, err = iotafs.New(p.Endpoint)
+		client, err = iotafs.New(endpoint)
+		if err != nil {
+			return err
+		}
+		adminC, err = admin.New(endpoint)
 		return err
 	}
 
@@ -662,10 +672,61 @@ func main() {
 			},
 			Action: makeAction(rm),
 		},
+		{
+			Name:  "admin",
+			Usage: "server administration",
+			Subcommands: []*cli.Command{
+				{
+					Name:  "start-vacuum",
+					Usage: "manually start the vacuum process",
+					Action: func(c *cli.Context) error {
+						id, err := adminC.StartVacuum(c.Context)
+						if err == nil {
+							fmt.Printf("vacuum %s started\n", id)
+						}
+						if errors.Is(err, admin.ErrVacuumInProgress) {
+							fmt.Println("vacuum already in progress")
+							return nil
+						}
+						return err
+					},
+				},
+				{
+					Name:  "vacuum-status",
+					Usage: "get the status of a vacuum",
+					Flags: []cli.Flag{
+						&cli.StringFlag{
+							Name:     "id",
+							Usage:    "vacuum ID",
+							Required: true,
+						},
+					},
+					Action: func(c *cli.Context) error {
+						vacuum, err := adminC.VacuumStatus(c.Context, c.String("id"))
+						if err != nil {
+							return err
+						}
+						if vacuum.Status == "RUNNING" {
+							fmt.Println(vacuum.Status)
+							return nil
+						}
+						elapsed := vacuum.CompletedAt.Sub(vacuum.StartedAt)
+						fmt.Printf("%s (%.1f seconds)\n", vacuum.Status, elapsed.Seconds())
+						return nil
+					},
+				},
+			},
+		},
 	}
 
 	app.Run(os.Args)
 }
+
+var description = `
+   Iota will look for its configuration file at $HOME/.iota/config.toml 
+   by default. Alternatively, its path may be specified by setting the 
+   IOTA_CONFIG_FILE environment variable, or with the --config option.
+   The server endpoint URL may be overriden with the --endpoint option.`
 
 var cpDescription = `
    At least one of <src> or <dst> must be prefixed with iota:// to
