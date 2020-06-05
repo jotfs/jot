@@ -678,7 +678,7 @@ func main() {
 			Subcommands: []*cli.Command{
 				{
 					Name:  "start-vacuum",
-					Usage: "manually start the vacuum process",
+					Usage: "manually start the server vacuum process",
 					Action: func(c *cli.Context) error {
 						id, err := adminC.StartVacuum(c.Context)
 						if err == nil {
@@ -715,6 +715,25 @@ func main() {
 						return nil
 					},
 				},
+				{
+					Name:  "stats",
+					Usage: "view server summary statistics",
+					Action: func(c *cli.Context) error {
+						stats, err := adminC.ServerStats(c.Context)
+						if err != nil {
+							return err
+						}
+						compRatio := float64(stats.TotalFilesSize) / float64(stats.TotalDataSize)
+						tFilesSize := strings.TrimSpace(humanBytes(stats.TotalFilesSize))
+						tDataSize := strings.TrimSpace(humanBytes(stats.TotalDataSize))
+						fmt.Printf("%-23s = %d\n", "Number of files", stats.NumFiles)
+						fmt.Printf("%-23s = %d\n", "Number of file versions", stats.NumFileVersions)
+						fmt.Printf("%-23s = %s\n", "Total files size", tFilesSize)
+						fmt.Printf("%-23s = %s\n", "Total data size", tDataSize)
+						fmt.Printf("%-23s = %.1f\n", "Compression ratio", compRatio)
+						return nil
+					},
+				},
 			},
 		},
 	}
@@ -726,7 +745,7 @@ var description = `
    Iota will look for its configuration file at $HOME/.iota/config.toml 
    by default. Alternatively, its path may be specified by setting the 
    IOTA_CONFIG_FILE environment variable, or with the --config option.
-   The server endpoint URL may be overriden with the --endpoint option.`
+   The server endpoint URL may be overridden with the --endpoint option.`
 
 var cpDescription = `
    At least one of <src> or <dst> must be prefixed with iota:// to

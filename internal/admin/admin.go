@@ -66,3 +66,19 @@ func (c *Client) VacuumStatus(ctx context.Context, id string) (Vacuum, error) {
 	completedAt := time.Unix(0, vacuum.CompletedAt)
 	return Vacuum{vacuum.Status, startedAt, completedAt}, nil
 }
+
+type Stats struct {
+	NumFiles        uint64
+	NumFileVersions uint64
+	TotalFilesSize   uint64
+	TotalDataSize   uint64
+}
+
+// ServerStats returns summary statistics for the server.
+func (c *Client) ServerStats(ctx context.Context) (Stats, error) {
+	stats, err := c.IotaFS.ServerStats(ctx, &pb.Empty{})
+	if err != nil {
+		return Stats{}, err
+	}
+	return Stats{stats.NumFiles, stats.NumFileVersions, stats.TotalFilesSize, stats.TotalDataSize}, nil
+}
