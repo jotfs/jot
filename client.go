@@ -1,4 +1,4 @@
-package iotafs
+package jot
 
 import (
 	"bytes"
@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iotafs/fastcdc-go"
+	"github.com/jotfs/fastcdc-go"
 	"github.com/rs/xid"
 	"github.com/twitchtv/twirp"
 	"golang.org/x/sync/errgroup"
 
-	pb "github.com/iotafs/iotafs-go/internal/protos"
+	pb "github.com/jotfs/jot/internal/protos"
 )
 
 // ErrNotFound is returned when a file with a given ID cannot be found on the remote.
@@ -35,11 +35,11 @@ const (
 	maxPackfileSize = 128 * miB
 )
 
-// Client implements methods to interact with an IotaFS server.
+// Client implements methods to interact with an JotFS server.
 type Client struct {
 	host     url.URL
 	hclient  *http.Client
-	iclient  pb.IotaFS
+	iclient  pb.JotFS
 	cacheDir string
 	mode     CompressMode
 	opts     *fastcdc.Options
@@ -59,7 +59,7 @@ type Options struct {
 	CacheDir string
 }
 
-// New returns a new Client connecting to an IotaFS server at the given endpoint URL.
+// New returns a new Client connecting to an JotFS server at the given endpoint URL.
 // Optional configuration may be set with opts.
 func New(endpoint string, opts *Options) (*Client, error) {
 	url, err := url.ParseRequestURI(endpoint)
@@ -82,7 +82,7 @@ func New(endpoint string, opts *Options) (*Client, error) {
 	return &Client{
 		host:     *url,
 		hclient:  hclient,
-		iclient:  pb.NewIotaFSProtobufClient(endpoint, hclient),
+		iclient:  pb.NewJotFSProtobufClient(endpoint, hclient),
 		cacheDir: cacheDir,
 		mode:     mode,
 	}, nil
@@ -119,7 +119,7 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 
 	// Create a directory to cache data during the upload
 	id := xid.New().String()
-	dir := filepath.Join(c.cacheDir, "iota-"+id)
+	dir := filepath.Join(c.cacheDir, "jot-"+id)
 	if err := os.Mkdir(dir, 0744); err != nil {
 		return FileID{}, err
 	}
@@ -298,7 +298,7 @@ func (c *Client) uploadPackfile(ctx context.Context, fpath string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("x-iota-checksum", base64.StdEncoding.EncodeToString(s[:]))
+	req.Header.Set("x-jotfs-checksum", base64.StdEncoding.EncodeToString(s[:]))
 	req.ContentLength = info.Size()
 
 	// Upload the file
@@ -454,7 +454,7 @@ type listIterator struct {
 	ctx     context.Context
 	opts    ListOpts
 	prefix  string
-	iclient pb.IotaFS
+	iclient pb.JotFS
 
 	nextPageToken int64
 	values        []*pb.FileInfo
@@ -528,7 +528,7 @@ type headIterator struct {
 	ctx     context.Context
 	opts    HeadOpts
 	name    string
-	iclient pb.IotaFS
+	iclient pb.JotFS
 
 	nextPageToken int64
 	values        []*pb.FileInfo
@@ -596,7 +596,7 @@ func (c *Client) HeadWithContext(ctx context.Context, name string, opts *HeadOpt
 	return &headIterator{ctx: ctx, opts: hopts, name: name, iclient: c.iclient}
 }
 
-// Download retrieves a file and writes it to w. Returns iotafs.ErrNotFound if the file
+// Download retrieves a file and writes it to w. Returns jotfs.ErrNotFound if the file
 // does not exist.
 func (c *Client) Download(file FileID, w io.Writer) error {
 	return c.DownloadWithContext(context.Background(), file, w)
@@ -694,7 +694,7 @@ func mergeErrors(e error, minor error) error {
 }
 
 // Copy makes a copy of a file from src to dst and returns the ID of the new file.
-// Returns iotafs.ErrNotFound if the src does not exist.
+// Returns jotfs.ErrNotFound if the src does not exist.
 func (c *Client) Copy(src FileID, dst string) (FileID, error) {
 	return c.CopyWithContext(context.Background(), src, dst)
 }
@@ -715,7 +715,7 @@ func (c *Client) CopyWithContext(ctx context.Context, src FileID, dst string) (F
 	return s, nil
 }
 
-// Delete deletes a file with a given ID. Returns iotafs.ErrNotFound if the file does not
+// Delete deletes a file with a given ID. Returns jotfs.ErrNotFound if the file does not
 // exist.
 func (c *Client) Delete(file FileID) error {
 	return c.DeleteWithContext(context.Background(), file)

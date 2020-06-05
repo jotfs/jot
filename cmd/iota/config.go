@@ -12,7 +12,7 @@ import (
 	"github.com/mitchellh/go-homedir"
 )
 
-const configFileEnvVar = "IOTA_CONFIG_FILE"
+const configFileEnvVar = "JOT_CONFIG_FILE"
 
 type config struct {
 	Profile []profile
@@ -61,7 +61,7 @@ func getConfigFile() string {
 		if err != nil {
 			return ""
 		}
-		name := filepath.Join(home, ".iota", "config.toml")
+		name := filepath.Join(home, ".jot", "config.toml")
 		if checkFile(name) {
 			return name
 		}

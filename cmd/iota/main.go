@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iotafs/iotafs-go"
-	"github.com/iotafs/iotafs-go/internal/admin"
+	"github.com/jotfs/jot"
+	"github.com/jotfs/jot/internal/admin"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
@@ -27,31 +27,31 @@ const (
 	giB = 1024 * miB
 )
 
-type handler func(*iotafs.Client, *cli.Context) error
+type handler func(*jot.Client, *cli.Context) error
 
-func getLatestVersion(client *iotafs.Client, name string) (iotafs.FileInfo, error) {
-	it := client.Head(name, &iotafs.HeadOpts{Limit: 1})
+func getLatestVersion(client *jot.Client, name string) (jot.FileInfo, error) {
+	it := client.Head(name, &jot.HeadOpts{Limit: 1})
 	info, err := it.Next()
 	if err == io.EOF {
-		return iotafs.FileInfo{}, fmt.Errorf("file %s not found", name)
+		return jot.FileInfo{}, fmt.Errorf("file %s not found", name)
 	}
 	if err != nil {
-		return iotafs.FileInfo{}, nil
+		return jot.FileInfo{}, nil
 	}
 	return info, nil
 }
 
-func cp(client *iotafs.Client, c *cli.Context) error {
+func cp(client *jot.Client, c *cli.Context) error {
 	args := c.Args()
 	if args.Len() != 2 {
 		return fmt.Errorf("two arguments expected")
 	}
 
-	src, srcRemote := isIotaLocation(args.Get(0))
-	dst, dstRemote := isIotaLocation(args.Get(1))
+	src, srcRemote := isJotLocation(args.Get(0))
+	dst, dstRemote := isJotLocation(args.Get(1))
 
 	if srcRemote && dstRemote {
-		// Copying from one IotaFS location to another
+		// Copying from one JotFS location to another
 		// TODO: allow user to specify version with --version flag
 		// TODO: allow --all-versions flag
 		latest, err := getLatestVersion(client, src)
@@ -65,7 +65,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		}
 
 	} else if srcRemote && !dstRemote {
-		// Copying from IotaFS source to local destination (download)
+		// Copying from JotFS source to local destination (download)
 		// TODO: allow user to specify version with --version flag
 		dstEx, err := homedir.Expand(dst)
 		if err != nil {
@@ -115,7 +115,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		return mergeErrors(err, f.Close())
 
 	} else if !srcRemote && dstRemote {
-		// Copying from local source to Iota destination (upload)
+		// Copying from local source to JotFS destination (upload)
 		src := filepath.Clean(src)
 		srcEx, err := homedir.Expand(src)
 		if err != nil {
@@ -138,25 +138,25 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		return uploadFile(c.Context, client, srcEx, dst)
 
 	} else {
-		return fmt.Errorf("at least one of <src> or <dst> must be an iota:// location")
+		return fmt.Errorf("at least one of <src> or <dst> must be an jot:// location")
 	}
 
 	return nil
 }
 
-func uploadFile(ctx context.Context, client *iotafs.Client, src string, dst string) error {
+func uploadFile(ctx context.Context, client *jot.Client, src string, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("unable to open %s: %v", src, err)
 	}
 	defer f.Close()
 	fmt.Printf("upload: %s -> %s\n", src, dst)
-	_, err = client.UploadWithContext(ctx, f, dst, iotafs.CompressNone)
+	_, err = client.UploadWithContext(ctx, f, dst, jot.CompressNone)
 	return err
 }
 
 // uploadRecursive recursively uploads the contents of a local directory.
-func uploadRecursive(c *cli.Context, client *iotafs.Client, srcDir string, dstDir string) error {
+func uploadRecursive(c *cli.Context, client *jot.Client, srcDir string, dstDir string) error {
 	if strings.HasSuffix(srcDir, "..") {
 		return errors.New("src cannot end in \"..\"")
 	}
@@ -210,7 +210,7 @@ func uploadRecursive(c *cli.Context, client *iotafs.Client, srcDir string, dstDi
 }
 
 // uploadDir uploads the contents of a local directory.
-func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir string) error {
+func uploadDir(c *cli.Context, client *jot.Client, srcDir string, dstDir string) error {
 	entries, err := ioutil.ReadDir(srcDir)
 	if err != nil {
 		return err
@@ -262,7 +262,7 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 	return g.Wait()
 }
 
-func downloadFile(ctx context.Context, client *iotafs.Client, src iotafs.FileID, dst string) error {
+func downloadFile(ctx context.Context, client *jot.Client, src jot.FileID, dst string) error {
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return fmt.Errorf("unable to open %s: %v", src, err)
@@ -272,7 +272,7 @@ func downloadFile(ctx context.Context, client *iotafs.Client, src iotafs.FileID,
 }
 
 // downloadRecursive recursively downloads the contents of a directory.
-func downloadRecursive(c *cli.Context, client *iotafs.Client, prefix string, dstDir string) error {
+func downloadRecursive(c *cli.Context, client *jot.Client, prefix string, dstDir string) error {
 	// Create the source directory if it doesn't exist
 	exists, err := dirExists(dstDir)
 	if err != nil {
@@ -291,7 +291,7 @@ func downloadRecursive(c *cli.Context, client *iotafs.Client, prefix string, dst
 
 	// job stores the checksum of a file to download and the local dst to save it to
 	type job struct {
-		src iotafs.FileID
+		src jot.FileID
 		dst string
 	}
 	queue := make(chan job)
@@ -364,7 +364,7 @@ func mergeErrors(e error, minor error) error {
 	return fmt.Errorf("%w; %v", e, minor)
 }
 
-func ls(client *iotafs.Client, c *cli.Context) error {
+func ls(client *jot.Client, c *cli.Context) error {
 	args := c.Args()
 	if args.Len() > 1 {
 		s := strings.Join(args.Slice(), ", ")
@@ -381,7 +381,7 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	fmt.Printf(format, "CREATED", "SIZE", "ID", "NAME")
 
 	if c.Bool("recursive") {
-		opts := &iotafs.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
+		opts := &jot.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
 		it := client.List(prefix, opts)
 		return lsOutput(it, format)
 	}
@@ -389,7 +389,7 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 	// Non-recursive ls
 	// Get all files inside the directory
 	exclude := path.Join(prefix, "*/*")
-	opts := &iotafs.ListOpts{Exclude: exclude}
+	opts := &jot.ListOpts{Exclude: exclude}
 	it := client.List(prefix, opts)
 	lsOutput(it, format)
 
@@ -419,7 +419,7 @@ func ls(client *iotafs.Client, c *cli.Context) error {
 }
 
 // lsOutput prints the output from a FileIterator
-func lsOutput(it iotafs.FileIterator, format string) error {
+func lsOutput(it jot.FileIterator, format string) error {
 	for {
 		info, err := it.Next()
 		if err == io.EOF {
@@ -451,22 +451,22 @@ func cleanPath(name string) string {
 	return name
 }
 
-func rm(client *iotafs.Client, c *cli.Context) error {
+func rm(client *jot.Client, c *cli.Context) error {
 	args := c.Args()
 
 	// TODO: implement --version flag (only one arg allowed in this case)
 	// TODO: handle trailing slash
 
 	for _, name := range args.Slice() {
-		var it iotafs.FileIterator
+		var it jot.FileIterator
 		if c.Bool("recursive") {
-			opts := &iotafs.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
+			opts := &jot.ListOpts{Exclude: c.String("exclude"), Include: c.String("include")}
 			it = client.List(name, opts)
 		} else if c.Bool("all-versions") {
 			it = client.Head(name, nil)
 		} else {
 			// Just the latest version
-			it = client.Head(name, &iotafs.HeadOpts{Limit: 1})
+			it = client.Head(name, &jot.HeadOpts{Limit: 1})
 		}
 
 		for {
@@ -512,21 +512,21 @@ func humanBytes(size uint64) string {
 	return fmt.Sprintf("%5.1f GiB", float64(size)/giB)
 }
 
-func isIotaLocation(s string) (string, bool) {
-	if strings.HasPrefix(s, "iota://") {
+func isJotLocation(s string) (string, bool) {
+	if strings.HasPrefix(s, "jot://") {
 		return s[6:], true
 	}
 	return s, false
 }
 
 func main() {
-	var client *iotafs.Client
+	var client *jot.Client
 	var adminC *admin.Client
 	var endpoint string
 
 	app := cli.NewApp()
-	app.Name = "iota"
-	app.Usage = "A CLI tool for working with an IotaFS server"
+	app.Name = "jot"
+	app.Usage = "A CLI tool for working with an JotFS server"
 	app.Description = description
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
@@ -574,7 +574,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		client, err = iotafs.New(endpoint, nil)
+		client, err = jot.New(endpoint, nil)
 		if err != nil {
 			return err
 		}
@@ -597,8 +597,8 @@ func main() {
 	app.Commands = []*cli.Command{
 		{
 			Name:        "cp",
-			Usage:       "copy files to / from IotaFS",
-			UsageText:   "iota cp <src> <dst>",
+			Usage:       "copy files to / from JotFS",
+			UsageText:   "jot cp <src> <dst>",
 			Description: cpDescription,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
@@ -629,7 +629,7 @@ func main() {
 		{
 			Name:      "ls",
 			Usage:     "list files",
-			UsageText: "iota ls <prefix>",
+			UsageText: "jot ls <prefix>",
 			Action:    makeAction(ls),
 			Flags: []cli.Flag{
 				&cli.StringFlag{
@@ -650,7 +650,7 @@ func main() {
 		{
 			Name:        "rm",
 			Usage:       "remove files",
-			UsageText:   "iota rm <file>...",
+			UsageText:   "jot rm <file>...",
 			Description: rmDescription,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
@@ -744,40 +744,40 @@ func main() {
 }
 
 var description = `
-   Iota will look for its configuration file at $HOME/.iota/config.toml 
+   jot will look for its configuration file at $HOME/.jot/config.toml 
    by default. Alternatively, its path may be specified by setting the 
-   IOTA_CONFIG_FILE environment variable, or with the --config option.
+   JOT_CONFIG_FILE environment variable, or with the --config option.
    The server endpoint URL may be overridden with the --endpoint option.`
 
 var cpDescription = `
-   At least one of <src> or <dst> must be prefixed with iota:// to
+   At least one of <src> or <dst> must be prefixed with jot:// to
    signify the operation as an upload, download or copy.
 
 EXAMPLES:
    
    Download a single file:
 
-      iota cp iota://images/bird.png ./the_bird.png
+      jot cp jot://images/bird.png ./the_bird.png
 
    Download recursive (local directories will be created):
 
-      iota cp -r iota://images images
+      jot cp -r jot://images images
 	  
    Upload a single file:
 
-      iota cp test.csv iota://data/test.csv  
+      jot cp test.csv jot://data/test.csv  
 
    Upload recursive:
 
-      iota cp -r datasets/ iota://datasets
+      jot cp -r datasets/ jot://datasets
 
    Exclude certain files:
 
-      iota cp -r --exclude "/img/*" --include "/img/a.png" iota:// files/ 
+      jot cp -r --exclude "/img/*" --include "/img/a.png" jot:// files/ 
 
-   Copy a file from one Iota location to another:
+   Copy a file from one JotFS location to another:
 
-      iota cp iota://test.csv iota://data/test-copy.csv
+      jot cp jot://test.csv jot://data/test-copy.csv
 `
 
 var rmDescription = `
@@ -791,11 +791,11 @@ EXAMPLES:
 
    Remove files:
 	  
-      iota rm bird.png img/dog.png
+      jot rm bird.png img/dog.png
 
    Remove all files in img/ except those in img/birds:
 
-      iota rm -r --include "img/*" --exclude "img/birds/*" img/
+      jot rm -r --include "img/*" --exclude "img/birds/*" img/
 `
 
 var lsDescription = `

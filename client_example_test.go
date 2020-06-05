@@ -1,4 +1,4 @@
-package iotafs_test
+package jot_test
 
 import (
 	"bytes"
@@ -6,21 +6,21 @@ import (
 	"log"
 	"strings"
 
-	"github.com/iotafs/iotafs-go"
+	"github.com/jotfs/jot"
 )
 
 func ExampleNew() {
-	iotafs.New("http://example.com:6777", nil)
+	jot.New("http://example.com:6777", nil)
 }
 
 func ExampleNew_options() {
-	iotafs.New("https://iotafs.example.com", &iotafs.Options{
-		Compression: iotafs.CompressNone,
+	jot.New("https://jotfs.example.com", &jot.Options{
+		Compression: jot.CompressNone,
 	})
 }
 
 func ExampleClient_Upload() {
-	client, err := iotafs.New("http://localhost:6777", nil)
+	client, err := jot.New("http://localhost:6777", nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func ExampleClient_Upload() {
 }
 
 func ExampleClient_Download() {
-	client, err := iotafs.New("http://localhost:6777", nil)
+	client, err := jot.New("http://localhost:6777", nil)
 	if err != nil {
 		log.Fatal(err)
 	}

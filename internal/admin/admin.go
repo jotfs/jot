@@ -8,16 +8,16 @@ import (
 	"net/url"
 	"time"
 
-	pb "github.com/iotafs/iotafs-go/internal/protos"
+	pb "github.com/jotfs/jot/internal/protos"
 	"github.com/twitchtv/twirp"
 )
 
 // ErrVacuumInProgress is returned when a vacuum is already in progress on the server.
 var ErrVacuumInProgress = errors.New("vacuum in progress")
 
-// Client performs admin tasks on an IotaFS server.
+// Client performs admin tasks on an JotFS server.
 type Client struct {
-	pb.IotaFS
+	pb.JotFS
 }
 
 // New returns a new admin client.
@@ -25,14 +25,14 @@ func New(endpoint string) (*Client, error) {
 	if _, err := url.Parse(endpoint); err != nil {
 		return nil, fmt.Errorf("unable to parse endpoint: %w", err)
 	}
-	iclient := pb.NewIotaFSProtobufClient(endpoint, http.DefaultClient)
+	iclient := pb.NewJotFSProtobufClient(endpoint, http.DefaultClient)
 	return &Client{iclient}, nil
 }
 
 // StartVacuum manually initiates a vacuum on the server. It returns immediately. Returns
 // ErrVacuumInProgress if a vacuum is currently running on the server.
 func (c *Client) StartVacuum(ctx context.Context) (string, error) {
-	id, err := c.IotaFS.StartVacuum(ctx, &pb.Empty{})
+	id, err := c.JotFS.StartVacuum(ctx, &pb.Empty{})
 	if terr, ok := err.(twirp.Error); ok {
 		if terr.Code() == twirp.Unavailable {
 			return "", ErrVacuumInProgress
@@ -53,7 +53,7 @@ type Vacuum struct {
 
 // VacuumStatus returns the status of a given vacuum.
 func (c *Client) VacuumStatus(ctx context.Context, id string) (Vacuum, error) {
-	vacuum, err := c.IotaFS.VacuumStatus(ctx, &pb.VacuumID{Id: id})
+	vacuum, err := c.JotFS.VacuumStatus(ctx, &pb.VacuumID{Id: id})
 	if terr, ok := err.(twirp.Error); ok {
 		if terr.Code() == twirp.NotFound {
 			return Vacuum{}, fmt.Errorf("vacuum %s not found", id)
@@ -76,7 +76,7 @@ type Stats struct {
 
 // ServerStats returns summary statistics for the server.
 func (c *Client) ServerStats(ctx context.Context) (Stats, error) {
-	stats, err := c.IotaFS.ServerStats(ctx, &pb.Empty{})
+	stats, err := c.JotFS.ServerStats(ctx, &pb.Empty{})
 	if err != nil {
 		return Stats{}, err
 	}

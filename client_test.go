@@ -1,4 +1,4 @@
-package iotafs
+package jot
 
 import (
 	"bytes"

@@ -1,4 +1,4 @@
-package iotafs
+package jot
 
 import (
 	"encoding/hex"
@@ -11,7 +11,7 @@ import (
 // sumSize is the byte-size of a checksum
 const sumSize = 32
 
-// FileID represents a unique ID for a file on an IotaFS server.
+// FileID represents a unique ID for a file on an JotFS server.
 type FileID [sumSize]byte
 
 // computeSum returns the checksum of a byte slice.
