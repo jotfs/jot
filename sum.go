@@ -14,16 +14,6 @@ const sumSize = 32
 // FileID represents a unique ID for a file on an IotaFS server.
 type FileID [sumSize]byte
 
-// sumFromBytes converts a byte slice to a Sum. Its length must be sum.Size bytes.
-func sumFromBytes(b []byte) (FileID, error) {
-	if len(b) != sumSize {
-		return FileID{}, fmt.Errorf("length must be %d not %d", sumSize, len(b))
-	}
-	var s FileID
-	copy(s[:], b)
-	return s, nil
-}
-
 // computeSum returns the checksum of a byte slice.
 func computeSum(data []byte) FileID {
 	h := blake3.New()
@@ -33,18 +23,18 @@ func computeSum(data []byte) FileID {
 	return s
 }
 
-// AsHex returns the hex-encoded representation of s.
-func (s FileID) AsHex() string {
+// asHex returns the hex-encoded representation of s.
+func (s FileID) asHex() string {
 	return hex.EncodeToString(s[:])
 }
 
-// sumFromHex converts a hex encoded string to a Sum.
+// sumFromHex converts a hex encoded string to a FileID.
 func sumFromHex(s string) (FileID, error) {
 	b, err := hex.DecodeString(s)
 	if err != nil {
 		return FileID{}, err
 	}
-	return sumFromBytes(b)
+	return UnmarshalFileID(b)
 }
 
 // sumHash computes a checksum. Implements the `io.Writer` interface.
@@ -53,9 +43,9 @@ type sumHash struct {
 }
 
 // New returns a new Hash.
-func newHash() (*sumHash, error) {
+func newHash() *sumHash {
 	h := blake3.New()
-	return &sumHash{h}, nil
+	return &sumHash{h}
 }
 
 // Write writes a byte slice to the hash function.
@@ -69,4 +59,21 @@ func (h *sumHash) Sum() FileID {
 	var s FileID
 	copy(s[:], b)
 	return s
+}
+
+// Marshal serializes a FileID to a byte slice.
+func (s FileID) Marshal() []byte {
+	b := make([]byte, sumSize)
+	copy(b, s[:])
+	return b
+}
+
+// UnmarshalFileID converts a byte slice to a FileID.
+func UnmarshalFileID(b []byte) (FileID, error) {
+	if len(b) != sumSize {
+		return FileID{}, fmt.Errorf("length must be %d not %d", sumSize, len(b))
+	}
+	var s FileID
+	copy(s[:], b)
+	return s, nil
 }

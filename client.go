@@ -202,7 +202,7 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	if err != nil {
 		return FileID{}, err
 	}
-	sum, err := sumFromBytes(info.Sum)
+	sum, err := UnmarshalFileID(info.Sum)
 	if err != nil {
 		return FileID{}, err
 	}
@@ -370,7 +370,7 @@ func (p *packer) flush() error {
 		return os.Remove(p.f.Name())
 	}
 	packSum := p.builder.sum()
-	packName := filepath.Join(p.dir, packSum.AsHex())
+	packName := filepath.Join(p.dir, packSum.asHex())
 	if err := os.Rename(p.f.Name(), packName); err != nil {
 		return err
 	}
@@ -447,7 +447,7 @@ func (c *Client) ListWithContext(ctx context.Context, prefix string, opts *ListO
 	if lopts.BatchSize == 0 {
 		lopts.BatchSize = 1000
 	}
-	return &listIterator{opts: lopts, prefix: prefix, iclient: c.iclient}
+	return &listIterator{ctx: ctx, opts: lopts, prefix: prefix, iclient: c.iclient}
 }
 
 type listIterator struct {
@@ -496,7 +496,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 	}
 
 	v := it.values[it.cursor]
-	s, err := sumFromBytes(v.Sum)
+	s, err := UnmarshalFileID(v.Sum)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -567,7 +567,7 @@ func (it *headIterator) Next() (FileInfo, error) {
 	}
 
 	v := it.values[it.cursor]
-	s, err := sumFromBytes(v.Sum)
+	s, err := UnmarshalFileID(v.Sum)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -665,16 +665,13 @@ func (c *Client) downloadSection(dst io.Writer, s *pb.Section) error {
 			return fmt.Errorf("reading block: %w", err)
 		}
 
-		h, err := newHash()
-		if err != nil {
-			return err
-		}
-		w := io.MultiWriter(dst, h)
+		hash := newHash()
+		w := io.MultiWriter(dst, hash)
 		if err := block.Mode.decompressStream(w, bytes.NewReader(block.Data)); err != nil {
 			return fmt.Errorf("decompressing block: %w", err)
 		}
 
-		s := h.Sum()
+		s := hash.Sum()
 		if s != block.Sum {
 			return fmt.Errorf("actual chunk checksum %x does not match block sum %x", s, block.Sum)
 		}
@@ -711,7 +708,7 @@ func (c *Client) CopyWithContext(ctx context.Context, src FileID, dst string) (F
 	if err != nil {
 		return FileID{}, err
 	}
-	s, err := sumFromBytes(fileID.Sum)
+	s, err := UnmarshalFileID(fileID.Sum)
 	if err != nil {
 		return FileID{}, err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -428,8 +429,8 @@ func lsOutput(it iotafs.FileIterator, format string) error {
 			return err
 		}
 		ts := info.CreatedAt.Local().Format(time.RFC3339)
-		s := info.FileID.AsHex()[:8]
-		fmt.Printf(format, ts, humanBytes(info.Size), s, info.Name)
+		s := hex.EncodeToString(info.FileID.Marshal())
+		fmt.Printf(format, ts, humanBytes(info.Size), s[:8], info.Name)
 	}
 	return nil
 }
@@ -476,7 +477,8 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("delete: %s %s\n", info.Name, info.FileID.AsHex()[:8])
+			s := hex.EncodeToString(info.FileID.Marshal())
+			fmt.Printf("delete: %s %s\n", info.Name, s[:8])
 			if err := client.Delete(info.FileID); err != nil {
 				return err
 			}

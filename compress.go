@@ -13,9 +13,9 @@ type CompressMode uint8
 // Data compression modes
 const (
 	// Zstandard compression
-	CompressZstd CompressMode = 0 
+	CompressZstd CompressMode = 0
 	// No compression
-	CompressNone              = 1
+	CompressNone CompressMode = 1
 )
 
 // asUint8 converts a compression mode to a uint8.

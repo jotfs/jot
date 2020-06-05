@@ -16,11 +16,8 @@ type packfileBuilder struct {
 
 // newPackfileBuilder creates a new packfileBuilder
 func newPackfileBuilder(w io.Writer) (*packfileBuilder, error) {
-	hash, err := newHash()
-	if err != nil {
-		return nil, err
-	}
 	// Send everything writen to the packfile through the hash function
+	hash := newHash()
 	w = io.MultiWriter(w, hash)
 	wr := &countingWriter{w, 0}
 

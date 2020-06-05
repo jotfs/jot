@@ -30,7 +30,7 @@ func ExampleClient_Upload() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("fileID = %s\n", fileID.AsHex())
+	fmt.Printf("fileID = %x\n", fileID.Marshal())
 }
 
 func ExampleClient_Download() {
