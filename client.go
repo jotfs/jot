@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/iotafs/fastcdc-go"
+	"github.com/rs/xid"
 	"github.com/twitchtv/twirp"
 	"golang.org/x/sync/errgroup"
 
@@ -114,11 +114,8 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	})
 
 	// Create a directory to cache data during the upload
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return FileID{}, err
-	}
-	dir := filepath.Join(c.cacheDir, "iota-"+id.String())
+	id := xid.New().String()
+	dir := filepath.Join(c.cacheDir, "iota-"+id)
 	if err := os.Mkdir(dir, 0744); err != nil {
 		return FileID{}, err
 	}
@@ -344,11 +341,8 @@ func newPacker(dir string, packFiles chan<- string) (*packer, error) {
 }
 
 func (p *packer) initBuilder() error {
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return err
-	}
-	name := filepath.Join(p.dir, id.String())
+	id := xid.New().String()
+	name := filepath.Join(p.dir, id)
 	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
