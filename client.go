@@ -62,7 +62,7 @@ type Options struct {
 // New returns a new Client connecting to an IotaFS server at the given endpoint URL.
 // Optional configuration may be set with opts.
 func New(endpoint string, opts *Options) (*Client, error) {
-	url, err := url.Parse(endpoint)
+	url, err := url.ParseRequestURI(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse endpoint: %v", err)
 	}
@@ -88,13 +88,17 @@ func New(endpoint string, opts *Options) (*Client, error) {
 	}, nil
 }
 
-// Upload uploads the data from the reader to a given destination.
+// Upload reads data from r and uploads it to the server, creating a new file version at
+// dst. If a file already exists at the destination it will be kept if either:
+//  1. File versioning is currently enabled on the server
+//  2. File versioning was enabled when the existing version was uploaded
+// Otherwise the latest version will be overwritten.
 func (c *Client) Upload(r io.Reader, dst string) (FileID, error) {
 	return c.UploadWithContext(context.Background(), r, dst, c.mode)
 }
 
-// UploadWithContext is the same as Upload with a user-supplied Context and compression
-// mode which overrides the compression mode set for the client.
+// UploadWithContext is the same as Upload with a user-supplied context and compression
+// mode which overrides that set for the client.
 func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode CompressMode) (FileID, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -388,14 +392,16 @@ func (p *packer) addChunk(data []byte, sum FileID, mode CompressMode) error {
 	return p.builder.append(data, sum, mode)
 }
 
+// FileInfo stores metadata related to a file.
 type FileInfo struct {
 	Name      string
 	CreatedAt time.Time
 	Size      uint64
-	Sum       FileID
+	FileID    FileID
 }
 
-// FileIterator is an iterator over a stream of FileInfo returned by List and Head.
+// FileIterator is an iterator over a stream of FileInfo returned by the methods List and
+// Head.
 type FileIterator interface {
 
 	// Next returns the next FileInfo from the iterator. It returns io.EOF when the end
@@ -403,7 +409,7 @@ type FileIterator interface {
 	Next() (FileInfo, error)
 }
 
-// ListOpts specify the options for List.
+// ListOpts specify the options for the method List.
 type ListOpts struct {
 	// Exclude will exclude any files matching the glob pattern.
 	Exclude string
@@ -426,8 +432,14 @@ type ListOpts struct {
 	Ascending bool
 }
 
+// List returns an iterator over all versions of all files with a name matching the
+// given prefix. Files may be excluded / included by supplying a ListOpts struct.
 func (c *Client) List(prefix string, opts *ListOpts) FileIterator {
-	// itOpts := defaultIteratorOpts(opts)
+	return c.ListWithContext(context.Background(), prefix, opts)
+}
+
+// ListWithContext is the same as List with a user supplied context.
+func (c *Client) ListWithContext(ctx context.Context, prefix string, opts *ListOpts) FileIterator {
 	var lopts ListOpts
 	if opts != nil {
 		lopts = *opts
@@ -439,6 +451,7 @@ func (c *Client) List(prefix string, opts *ListOpts) FileIterator {
 }
 
 type listIterator struct {
+	ctx     context.Context
 	opts    ListOpts
 	prefix  string
 	iclient pb.IotaFS
@@ -459,8 +472,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 		}
 
 		// Get a new batch
-		ctx := context.Background()
-		resp, err := it.iclient.List(ctx, &pb.ListRequest{
+		resp, err := it.iclient.List(it.ctx, &pb.ListRequest{
 			Prefix:        it.prefix,
 			Limit:         it.opts.BatchSize,
 			NextPageToken: it.nextPageToken,
@@ -488,7 +500,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt).UTC(), Size: v.Size, Sum: s}
+	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt).UTC(), Size: v.Size, FileID: s}
 
 	it.cursor++
 	it.count++
@@ -496,7 +508,7 @@ func (it *listIterator) Next() (FileInfo, error) {
 	return info, nil
 }
 
-// HeadOpts specify the options for Head.
+// HeadOpts specify the options for the method Head.
 type HeadOpts struct {
 	// Limit is the maximum number of values to return from the iterator. Unlimited if
 	// unspecified.
@@ -513,6 +525,7 @@ type HeadOpts struct {
 }
 
 type headIterator struct {
+	ctx     context.Context
 	opts    HeadOpts
 	name    string
 	iclient pb.IotaFS
@@ -533,8 +546,7 @@ func (it *headIterator) Next() (FileInfo, error) {
 		}
 
 		// Get a new batch
-		ctx := context.Background()
-		resp, err := it.iclient.Head(ctx, &pb.HeadRequest{
+		resp, err := it.iclient.Head(it.ctx, &pb.HeadRequest{
 			Name:          it.name,
 			Limit:         it.opts.BatchSize,
 			NextPageToken: it.nextPageToken,
@@ -559,7 +571,7 @@ func (it *headIterator) Next() (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt).UTC(), Size: v.Size, Sum: s}
+	info := FileInfo{Name: v.Name, CreatedAt: time.Unix(0, v.CreatedAt).UTC(), Size: v.Size, FileID: s}
 
 	it.cursor++
 	it.count++
@@ -567,8 +579,13 @@ func (it *headIterator) Next() (FileInfo, error) {
 	return info, nil
 }
 
+// Head returns an iterator over the versions of a file with a given name.
 func (c *Client) Head(name string, opts *HeadOpts) FileIterator {
-	// itOpts := defaultIteratorOpts(opts)
+	return c.HeadWithContext(context.Background(), name, opts)
+}
+
+// HeadWithContext is the same as Head with a user supplied context.
+func (c *Client) HeadWithContext(ctx context.Context, name string, opts *HeadOpts) FileIterator {
 	var hopts HeadOpts
 	if opts != nil {
 		hopts = *opts
@@ -576,13 +593,17 @@ func (c *Client) Head(name string, opts *HeadOpts) FileIterator {
 	if hopts.BatchSize == 0 {
 		hopts.BatchSize = 1000
 	}
-	return &headIterator{opts: hopts, name: name, iclient: c.iclient}
+	return &headIterator{ctx: ctx, opts: hopts, name: name, iclient: c.iclient}
 }
 
-// Download retrieves a file and writes it to dst. Returns iotafs.ErrNotFound if the
-// file does not exist.
-func (c *Client) Download(file FileID, dst io.Writer) error {
-	ctx := context.Background()
+// Download retrieves a file and writes it to w. Returns iotafs.ErrNotFound if the file
+// does not exist.
+func (c *Client) Download(file FileID, w io.Writer) error {
+	return c.DownloadWithContext(context.Background(), file, w)
+}
+
+// DownloadWithContext is the same as Download with a user supplied context.
+func (c *Client) DownloadWithContext(ctx context.Context, file FileID, w io.Writer) error {
 	resp, err := c.iclient.Download(ctx, &pb.FileID{Sum: file[:]})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
 		return ErrNotFound
@@ -595,7 +616,7 @@ func (c *Client) Download(file FileID, dst io.Writer) error {
 	// the data to construct the original file.
 	for i := range resp.Sections {
 		section := resp.Sections[i]
-		err := c.downloadSection(dst, section)
+		err := c.downloadSection(w, section)
 		if err != nil {
 			return fmt.Errorf("section %d %s: %w", i, section.Url, err)
 		}
@@ -675,10 +696,14 @@ func mergeErrors(e error, minor error) error {
 	return fmt.Errorf("%w; %v", e, minor)
 }
 
-// Copy copies a file from one IotaFS location to another IotaFS location and returns
-// the ID of the new file. Returns iotafs.ErrNotFound if the source file does not exist.
+// Copy makes a copy of a file from src to dst and returns the ID of the new file.
+// Returns iotafs.ErrNotFound if the src does not exist.
 func (c *Client) Copy(src FileID, dst string) (FileID, error) {
-	ctx := context.Background()
+	return c.CopyWithContext(context.Background(), src, dst)
+}
+
+// CopyWithContext is the same as Copy with a user supplied context.
+func (c *Client) CopyWithContext(ctx context.Context, src FileID, dst string) (FileID, error) {
 	fileID, err := c.iclient.Copy(ctx, &pb.CopyRequest{SrcId: src[:], Dst: dst})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
 		return FileID{}, ErrNotFound
@@ -693,15 +718,17 @@ func (c *Client) Copy(src FileID, dst string) (FileID, error) {
 	return s, nil
 }
 
-// Delete deletes a file. Returns iotafs.ErrNotFound if the file does not exist.
+// Delete deletes a file with a given ID. Returns iotafs.ErrNotFound if the file does not
+// exist.
 func (c *Client) Delete(file FileID) error {
-	ctx := context.Background()
+	return c.DeleteWithContext(context.Background(), file)
+}
+
+// DeleteWithContext is the same as Delete with a user supplied context.
+func (c *Client) DeleteWithContext(ctx context.Context, file FileID) error {
 	_, err := c.iclient.Delete(ctx, &pb.FileID{Sum: file[:]})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
 		return ErrNotFound
-	}
-	if err != nil {
-		return err
 	}
 	return err
 }

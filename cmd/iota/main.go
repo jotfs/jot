@@ -58,7 +58,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 			return err
 		}
 		fmt.Printf("copy: %s -> %s\n", src, dst)
-		_, err = client.Copy(latest.Sum, dst)
+		_, err = client.Copy(latest.FileID, dst)
 		if err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func cp(client *iotafs.Client, c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		err = client.Download(latest.Sum, f)
+		err = client.Download(latest.FileID, f)
 		return mergeErrors(err, f.Close())
 
 	} else if !srcRemote && dstRemote {
@@ -340,7 +340,7 @@ func downloadRecursive(c *cli.Context, client *iotafs.Client, prefix string, dst
 		select {
 		case <-gctx.Done():
 			break
-		case queue <- job{src: info.Sum, dst: dst}:
+		case queue <- job{src: info.FileID, dst: dst}:
 			fmt.Printf("download: %s -> %s\n", info.Name, dst)
 		}
 	}
@@ -428,7 +428,7 @@ func lsOutput(it iotafs.FileIterator, format string) error {
 			return err
 		}
 		ts := info.CreatedAt.Local().Format(time.RFC3339)
-		s := info.Sum.AsHex()[:8]
+		s := info.FileID.AsHex()[:8]
 		fmt.Printf(format, ts, humanBytes(info.Size), s, info.Name)
 	}
 	return nil
@@ -476,8 +476,8 @@ func rm(client *iotafs.Client, c *cli.Context) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("delete: %s %s\n", info.Name, info.Sum.AsHex()[:8])
-			if err := client.Delete(info.Sum); err != nil {
+			fmt.Printf("delete: %s %s\n", info.Name, info.FileID.AsHex()[:8])
+			if err := client.Delete(info.FileID); err != nil {
 				return err
 			}
 		}

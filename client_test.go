@@ -15,9 +15,11 @@ import (
 )
 
 func TestNew(t *testing.T) {
+	// New
 	_, err := New("https://localhost:8000", nil)
 	assert.NoError(t, err)
 
+	// New with options
 	client, err := New("http://example.com", &Options{
 		Compression: CompressNone,
 		CacheDir:    "/var/log",
@@ -25,6 +27,11 @@ func TestNew(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, CompressNone, client.mode)
 	assert.Equal(t, "/var/log", client.cacheDir)
+
+	// Error if endpoint string is empty
+	client, err = New("", nil)
+	assert.Error(t, err)
+	assert.Nil(t, client)
 }
 
 func TestUpload(t *testing.T) {
@@ -77,9 +84,9 @@ func TestList(t *testing.T) {
 	s3 := uploadTestFile(t, client, data3, "files/data3.txt", CompressNone)
 
 	// We don't know the CreatedAt value here so leave it at zero for each
-	info1 := FileInfo{Name: "/data1.txt", Size: uint64(len(data1)), Sum: s1}
-	info2 := FileInfo{Name: "/files/data2.txt", Size: uint64(len(data2)), Sum: s2}
-	info3 := FileInfo{Name: "/files/data3.txt", Size: uint64(len(data3)), Sum: s3}
+	info1 := FileInfo{Name: "/data1.txt", Size: uint64(len(data1)), FileID: s1}
+	info2 := FileInfo{Name: "/files/data2.txt", Size: uint64(len(data2)), FileID: s2}
+	info3 := FileInfo{Name: "/files/data3.txt", Size: uint64(len(data3)), FileID: s3}
 
 	runIt := func(it FileIterator) ([]FileInfo, error) {
 		files := make([]FileInfo, 0)
@@ -199,7 +206,7 @@ func clearFiles(t *testing.T, client *Client) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = client.Delete(file.Sum); err != nil {
+		if err = client.Delete(file.FileID); err != nil {
 			t.Fatal(err)
 		}
 	}
