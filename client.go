@@ -41,27 +41,61 @@ type Client struct {
 	hclient  *http.Client
 	iclient  pb.IotaFS
 	cacheDir string
+	mode     CompressMode
 	opts     *fastcdc.Options
 }
 
-// New returns a new Client. The host should include the port number.
-func New(endpoint string) (*Client, error) {
+// Options specifies optional configuration for a Client.
+type Options struct {
+	// Compression, if set, overrides the default compression mode, CompressZstd.
+	Compression CompressMode
+
+	// Timeout specifies the maximum time limit for HTTP requests made by the client.
+	// It is unlimited by default.
+	Timeout time.Duration
+
+	// CacheDir specifies the directory the client may cache temporary data files.
+	// os.TempDir() by default. The directory must already exist.
+	CacheDir string
+}
+
+// New returns a new Client connecting to an IotaFS server at the given endpoint URL.
+// Optional configuration may be set with opts.
+func New(endpoint string, opts *Options) (*Client, error) {
 	url, err := url.Parse(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse host: %w", err)
+		return nil, fmt.Errorf("unable to parse endpoint: %v", err)
 	}
 
-	hclient := &http.Client{}
+	var timeout time.Duration
+	mode := CompressZstd
+	cacheDir := os.TempDir()
+	if opts != nil {
+		mode = opts.Compression
+		timeout = opts.Timeout
+		if opts.CacheDir != "" {
+			cacheDir = opts.CacheDir
+		}
+	}
+
+	hclient := &http.Client{Timeout: timeout}
 	return &Client{
 		host:     *url,
 		hclient:  hclient,
 		iclient:  pb.NewIotaFSProtobufClient(endpoint, hclient),
-		cacheDir: os.TempDir(),
+		cacheDir: cacheDir,
+		mode:     mode,
 	}, nil
 }
 
-// UploadWithContext uploads a new file with a given name.
-func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode CompressMode) (Sum, error) {
+// Upload uploads the data from the reader to a given destination.
+func (c *Client) Upload(r io.Reader, dst string) (FileID, error) {
+	return c.UploadWithContext(context.Background(), r, dst, c.mode)
+}
+
+// UploadWithContext is the same as Upload with a user-supplied Context and compression
+// mode which overrides the compression mode set for the client.
+func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string, mode CompressMode) (FileID, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -82,11 +116,11 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	// Create a directory to cache data during the upload
 	id, err := uuid.NewRandom()
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 	dir := filepath.Join(c.cacheDir, "iota-"+id.String())
 	if err := os.Mkdir(dir, 0744); err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 	defer os.RemoveAll(dir)
 
@@ -96,14 +130,14 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	if c.opts == nil {
 		opts, err := c.getChunkerOptions(ctx)
 		if err != nil {
-			return Sum{}, fmt.Errorf("retrieving chunker options: %w", err)
+			return FileID{}, fmt.Errorf("retrieving chunker options: %w", err)
 		}
 		c.opts = opts
 	}
 
 	chunker, err := fastcdc.NewChunker(r, *c.opts)
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 
 	fileSums := make([][]byte, 0)
@@ -155,21 +189,21 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	}()
 	if err != nil {
 		cancel()
-		return Sum{}, err
+		return FileID{}, err
 	}
 
 	if err = g.Wait(); err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 
 	// Create the file
 	info, err := c.iclient.CreateFile(ctx, &pb.File{Name: dst, Sums: fileSums})
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 	sum, err := sumFromBytes(info.Sum)
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 
 	return sum, nil
@@ -185,13 +219,13 @@ type location struct {
 type cache struct {
 	cursor int
 	buf    []byte
-	sums   []Sum
-	chunks map[Sum]location
+	sums   []FileID
+	chunks map[FileID]location
 }
 
 // newCache creates a new cache with a given buffer size.
 func newCache(size int) *cache {
-	return &cache{0, make([]byte, size), make([]Sum, 0), make(map[Sum]location)}
+	return &cache{0, make([]byte, size), make([]FileID, 0), make(map[FileID]location)}
 }
 
 // hasCapacity returns true if the cache has enough room to store data.
@@ -203,7 +237,7 @@ func (c *cache) hasCapacity(data []byte) bool {
 }
 
 // saveChunk copies chunk data with a given checksum to the cache.
-func (c *cache) saveChunk(data []byte, s Sum) error {
+func (c *cache) saveChunk(data []byte, s FileID) error {
 	if !c.hasCapacity(data) {
 		return fmt.Errorf("unable to save chunk of size %d into cache", len(data))
 	}
@@ -222,7 +256,7 @@ func (c *cache) saveChunk(data []byte, s Sum) error {
 
 // getChunk returns chunk data from the cache with a given checksum. Will panic if a
 // chunk with the provided checksum has not already been saved.
-func (c *cache) getChunk(s Sum) []byte {
+func (c *cache) getChunk(s FileID) []byte {
 	loc := c.chunks[s]
 	return c.buf[loc.offset : loc.offset+loc.size]
 }
@@ -230,7 +264,7 @@ func (c *cache) getChunk(s Sum) []byte {
 // clear removes all data from the cache.
 func (c *cache) clear() {
 	c.cursor = 0
-	c.chunks = make(map[Sum]location)
+	c.chunks = make(map[FileID]location)
 	c.sums = c.sums[:0]
 }
 
@@ -282,7 +316,7 @@ func (c *Client) uploadPackfile(ctx context.Context, fpath string) error {
 	return nil
 }
 
-func sumsToBytes(sums []Sum) [][]byte {
+func sumsToBytes(sums []FileID) [][]byte {
 	b := make([][]byte, len(sums))
 	for i := range sums {
 		b[i] = sums[i][:]
@@ -348,7 +382,7 @@ func (p *packer) flush() error {
 }
 
 // addChunk adds a chunk to a packfile owned by the packer.
-func (p *packer) addChunk(data []byte, sum Sum, mode CompressMode) error {
+func (p *packer) addChunk(data []byte, sum FileID, mode CompressMode) error {
 	if p.builder.size()+uint64(len(data)) > maxPackfileSize {
 		if err := p.flush(); err != nil {
 			return err
@@ -364,7 +398,7 @@ type FileInfo struct {
 	Name      string
 	CreatedAt time.Time
 	Size      uint64
-	Sum       Sum
+	Sum       FileID
 }
 
 // FileIterator is an iterator over a stream of FileInfo returned by List and Head.
@@ -553,7 +587,7 @@ func (c *Client) Head(name string, opts *HeadOpts) FileIterator {
 
 // Download retrieves a file and writes it to dst. Returns iotafs.ErrNotFound if the
 // file does not exist.
-func (c *Client) Download(file Sum, dst io.Writer) error {
+func (c *Client) Download(file FileID, dst io.Writer) error {
 	ctx := context.Background()
 	resp, err := c.iclient.Download(ctx, &pb.FileID{Sum: file[:]})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
@@ -649,24 +683,24 @@ func mergeErrors(e error, minor error) error {
 
 // Copy copies a file from one IotaFS location to another IotaFS location and returns
 // the ID of the new file. Returns iotafs.ErrNotFound if the source file does not exist.
-func (c *Client) Copy(src Sum, dst string) (Sum, error) {
+func (c *Client) Copy(src FileID, dst string) (FileID, error) {
 	ctx := context.Background()
 	fileID, err := c.iclient.Copy(ctx, &pb.CopyRequest{SrcId: src[:], Dst: dst})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {
-		return Sum{}, ErrNotFound
+		return FileID{}, ErrNotFound
 	}
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 	s, err := sumFromBytes(fileID.Sum)
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 	return s, nil
 }
 
 // Delete deletes a file. Returns iotafs.ErrNotFound if the file does not exist.
-func (c *Client) Delete(file Sum) error {
+func (c *Client) Delete(file FileID) error {
 	ctx := context.Background()
 	_, err := c.iclient.Delete(ctx, &pb.FileID{Sum: file[:]})
 	if e, ok := err.(twirp.Error); ok && e.Code() == twirp.NotFound {

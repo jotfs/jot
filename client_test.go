@@ -3,6 +3,7 @@ package iotafs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -13,18 +14,31 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestNew(t *testing.T) {
+	_, err := New("https://localhost:8000", nil)
+	assert.NoError(t, err)
+
+	client, err := New("http://example.com", &Options{
+		Compression: CompressNone,
+		CacheDir:    "/var/log",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, CompressNone, client.mode)
+	assert.Equal(t, "/var/log", client.cacheDir)
+}
+
 func TestUpload(t *testing.T) {
 	client := testClient(t)
 	defer clearFiles(t, client)
 
 	// Upload data
-	data := randBytes(10*miB, 7456)
-	ctx := context.Background()
-	_, err := client.UploadWithContext(ctx, bytes.NewReader(data), "data.txt", CompressNone)
+	data := randBytes(200*miB, 7456)
+	_, err := client.Upload(bytes.NewReader(data), "data.txt")
 	assert.NoError(t, err)
 
 	// Upload empty data
-	_, err = client.UploadWithContext(ctx, bytes.NewReader(nil), "data2.txt", CompressZstd)
+	ctx := context.Background()
+	_, err = client.UploadWithContext(ctx, bytes.NewReader(nil), "data2.txt", CompressNone)
 	assert.NoError(t, err)
 }
 
@@ -46,7 +60,7 @@ func TestDownload(t *testing.T) {
 
 	// Download file which doesn't exist -- should get ErrNotFound
 	var buf bytes.Buffer
-	err := client.Download(Sum{}, &buf)
+	err := client.Download(FileID{}, &buf)
 	assert.Equal(t, ErrNotFound, err)
 
 }
@@ -101,7 +115,7 @@ func TestList(t *testing.T) {
 	files, err = runIt(it)
 	assert.NoError(t, err)
 	assert.Equal(t, []FileInfo{info2, info1}, files)
-	
+
 	// List -- no matches
 	it = client.List("/invalid/", nil)
 	files, err = runIt(it)
@@ -125,7 +139,7 @@ func TestCopy(t *testing.T) {
 	client := testClient(t)
 	defer clearFiles(t, client)
 
-	data1 := randBytes(13 * miB, 5343)
+	data1 := randBytes(13*miB, 5343)
 	s1 := uploadTestFile(t, client, data1, "data1.txt", CompressNone)
 
 	// Copy
@@ -139,11 +153,34 @@ func TestCopy(t *testing.T) {
 	assert.Equal(t, data1, buf.Bytes())
 
 	// Copy does not exist
-	_, err = client.Copy(Sum{}, "abc")
+	_, err = client.Copy(FileID{}, "abc")
 	assert.Equal(t, ErrNotFound, err)
 }
 
-func uploadTestFile(t *testing.T, client *Client, data []byte, name string, mode CompressMode) Sum {
+func TestMergeErrors(t *testing.T) {
+	err1 := errors.New("1")
+	err2 := errors.New("2")
+
+	tests := []struct {
+		e      error
+		minor  error
+		output error
+	}{
+		{err1, nil, err1},
+		{nil, err2, err2},
+		{nil, nil, nil},
+	}
+
+	for i, test := range tests {
+		assert.Equal(t, test.output, mergeErrors(test.e, test.minor), i)
+	}
+
+	// Check wrapping
+	err := mergeErrors(err1, err2)
+	assert.Equal(t, err1, errors.Unwrap(err))
+}
+
+func uploadTestFile(t *testing.T, client *Client, data []byte, name string, mode CompressMode) FileID {
 	ctx := context.Background()
 	s, err := client.UploadWithContext(ctx, bytes.NewReader(data), name, mode)
 	if err != nil {
@@ -169,7 +206,7 @@ func clearFiles(t *testing.T, client *Client) {
 }
 
 func testClient(t *testing.T) *Client {
-	client, err := New("http://localhost:6776")
+	client, err := New("http://localhost:6777", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +221,7 @@ func randBytes(n int, seed int64) []byte {
 }
 
 func BenchmarkUpload(b *testing.B) {
-	client, err := New("http://localhost:6776")
+	client, err := New("http://localhost:6777", nil)
 	if err != nil {
 		b.Fatal(err)
 	}

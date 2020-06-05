@@ -29,7 +29,7 @@ func newPackfileBuilder(w io.Writer) (*packfileBuilder, error) {
 }
 
 // append writes a chunk of data to the packfile.
-func (b *packfileBuilder) append(data []byte, sum Sum, mode CompressMode) error {
+func (b *packfileBuilder) append(data []byte, sum FileID, mode CompressMode) error {
 	if b.size() == 0 {
 		if _, err := b.w.Write([]byte{packfileObject}); err != nil {
 			return fmt.Errorf("setting packfile object type: %w", err)
@@ -51,13 +51,13 @@ func (b *packfileBuilder) size() uint64 {
 }
 
 // sum returns the checksum of all data written to the packfile so far.
-func (b *packfileBuilder) sum() Sum {
+func (b *packfileBuilder) sum() FileID {
 	return b.hash.Sum()
 }
 
 // makeBlock creates a packfile block in its binary format. The data should not be
 // compressed beforehand.
-func makeBlock(data []byte, s Sum, mode CompressMode) ([]byte, error) {
+func makeBlock(data []byte, s FileID, mode CompressMode) ([]byte, error) {
 	compressed, err := mode.compress(data)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func makeBlock(data []byte, s Sum, mode CompressMode) ([]byte, error) {
 }
 
 type block struct {
-	Sum    Sum
+	Sum    FileID
 	Mode   CompressMode
 	Data   []byte
 }
@@ -93,7 +93,7 @@ func readBlock(r io.Reader) (block, error) {
 	if err != nil {
 		return block{}, fmt.Errorf("invalid compression mode %d", mode)
 	}
-	var s Sum
+	var s FileID
 	if _, err := io.ReadFull(r, s[:]); err != nil {
 		return block{}, err
 	}

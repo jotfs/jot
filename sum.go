@@ -11,38 +11,38 @@ import (
 // sumSize is the byte-size of a checksum
 const sumSize = 32
 
-// Sum stores a checksum
-type Sum [sumSize]byte
+// FileID represents a unique ID for a file on an IotaFS server.
+type FileID [sumSize]byte
 
 // sumFromBytes converts a byte slice to a Sum. Its length must be sum.Size bytes.
-func sumFromBytes(b []byte) (Sum, error) {
+func sumFromBytes(b []byte) (FileID, error) {
 	if len(b) != sumSize {
-		return Sum{}, fmt.Errorf("length must be %d not %d", sumSize, len(b))
+		return FileID{}, fmt.Errorf("length must be %d not %d", sumSize, len(b))
 	}
-	var s Sum
+	var s FileID
 	copy(s[:], b)
 	return s, nil
 }
 
 // computeSum returns the checksum of a byte slice.
-func computeSum(data []byte) Sum {
+func computeSum(data []byte) FileID {
 	h := blake3.New()
 	h.Write(data)
-	var s Sum
+	var s FileID
 	copy(s[:], h.Sum(nil))
 	return s
 }
 
 // AsHex returns the hex-encoded representation of s.
-func (s Sum) AsHex() string {
+func (s FileID) AsHex() string {
 	return hex.EncodeToString(s[:])
 }
 
 // sumFromHex converts a hex encoded string to a Sum.
-func sumFromHex(s string) (Sum, error) {
+func sumFromHex(s string) (FileID, error) {
 	b, err := hex.DecodeString(s)
 	if err != nil {
-		return Sum{}, err
+		return FileID{}, err
 	}
 	return sumFromBytes(b)
 }
@@ -64,9 +64,9 @@ func (h *sumHash) Write(p []byte) (int, error) {
 }
 
 // Sum returns the current checksum of a Hash.
-func (h *sumHash) Sum() Sum {
+func (h *sumHash) Sum() FileID {
 	b := h.h.Sum(nil)
-	var s Sum
+	var s FileID
 	copy(s[:], b)
 	return s
 }

@@ -261,7 +261,7 @@ func uploadDir(c *cli.Context, client *iotafs.Client, srcDir string, dstDir stri
 	return g.Wait()
 }
 
-func downloadFile(ctx context.Context, client *iotafs.Client, src iotafs.Sum, dst string) error {
+func downloadFile(ctx context.Context, client *iotafs.Client, src iotafs.FileID, dst string) error {
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return fmt.Errorf("unable to open %s: %v", src, err)
@@ -290,7 +290,7 @@ func downloadRecursive(c *cli.Context, client *iotafs.Client, prefix string, dst
 
 	// job stores the checksum of a file to download and the local dst to save it to
 	type job struct {
-		src iotafs.Sum
+		src iotafs.FileID
 		dst string
 	}
 	queue := make(chan job)
@@ -572,7 +572,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		client, err = iotafs.New(endpoint)
+		client, err = iotafs.New(endpoint, nil)
 		if err != nil {
 			return err
 		}
