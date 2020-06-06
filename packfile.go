@@ -12,6 +12,7 @@ const packfileObject uint8 = 1
 type packfileBuilder struct {
 	w    *countingWriter
 	hash *sumHash
+	buf  []byte
 }
 
 // newPackfileBuilder creates a new packfileBuilder
@@ -21,7 +22,7 @@ func newPackfileBuilder(w io.Writer) (*packfileBuilder, error) {
 	w = io.MultiWriter(w, hash)
 	wr := &countingWriter{w, 0}
 
-	b := packfileBuilder{wr, hash}
+	b := packfileBuilder{wr, hash, make([]byte, 0)}
 	return &b, nil
 }
 
@@ -32,11 +33,14 @@ func (b *packfileBuilder) append(data []byte, sum FileID, mode CompressMode) err
 			return fmt.Errorf("setting packfile object type: %w", err)
 		}
 	}
-	block, err := makeBlock(data, sum, mode)
+	// block, err := makeBlock(data, sum, mode)
+	b.buf = b.buf[:0]
+	var err error
+	b.buf, err = makeBlock(data, sum, mode, b.buf)
 	if err != nil {
 		return fmt.Errorf("appending chunk to packfile: %w", err)
 	}
-	if _, err := b.w.Write(block); err != nil {
+	if _, err := b.w.Write(b.buf); err != nil {
 		return fmt.Errorf("appending chunk to packfile: %w", err)
 	}
 	return nil
@@ -54,27 +58,36 @@ func (b *packfileBuilder) sum() FileID {
 
 // makeBlock creates a packfile block in its binary format. The data should not be
 // compressed beforehand.
-func makeBlock(data []byte, s FileID, mode CompressMode) ([]byte, error) {
-	compressed, err := mode.compress(data)
-	if err != nil {
-		return nil, err
-	}
+func makeBlock(data []byte, s FileID, mode CompressMode, buf []byte) ([]byte, error) {
+	// compressed, err := mode.compress(data)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	capacity := 8 + 1 + sumSize + len(data)
-	block := make([]byte, 8, capacity)
+	// capacity := 8 + 1 + sumSize + len(data)
+	// block := make([]byte, 8, capacity)
 
-	binary.LittleEndian.PutUint64(block[:8], uint64(len(compressed)))
-	block = append(block, mode.asUint8())
-	block = append(block, s[:]...)
-	block = append(block, compressed...)
+	// binary.LittleEndian.PutUint64(block[:8], uint64(len(compressed)))
+	var err error
+	buf = append(buf, []byte{0, 0, 0, 0, 0, 0, 0, 0}...)
+	buf = append(buf, uint8(mode))
+	buf = append(buf, s[:]...)
+	buf, err = mode.compress(data, buf)
 
-	return block, nil
+	compressedSize := len(buf) - (8 + 1 + sumSize)
+	binary.LittleEndian.PutUint64(buf[:8], uint64(compressedSize))
+
+	return buf, err
+
+	// block = append(block, compressed...)
+
+	// return block, nil
 }
 
 type block struct {
-	Sum    FileID
-	Mode   CompressMode
-	Data   []byte
+	Sum  FileID
+	Mode CompressMode
+	Data []byte
 }
 
 func readBlock(r io.Reader) (block, error) {
@@ -86,7 +99,7 @@ func readBlock(r io.Reader) (block, error) {
 	if err := binary.Read(r, binary.LittleEndian, &m); err != nil {
 		return block{}, err
 	}
-	mode, err := fromUint8(m)
+	mode, err := compressModeFromUint8(m)
 	if err != nil {
 		return block{}, fmt.Errorf("invalid compression mode %d", mode)
 	}

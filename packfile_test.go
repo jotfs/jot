@@ -22,8 +22,35 @@ func TestPackfileBuilder(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NotZero(t, builder.size())
-	// s := builder.hash.Sum()
-	// assert.Equal(t, s.AsHex(), "f316ea532329ffc9fddf616d1791abe6c4b637430400958e0016ca5268f73a87")
+
+	// Deserialize the packfile
+	// First byte should be object type
+	otype, err := buf.ReadByte()
+	assert.NoError(t, err)
+	assert.Equal(t, packfileObject, otype)
+
+	// Read first block
+	b1, err := readBlock(buf)
+	assert.NoError(t, err)
+	assert.Equal(t, CompressNone, b1.Mode)
+	assert.Equal(t, aSum, b1.Sum)
+
+	// Read second block
+	b2, err := readBlock(buf)
+	assert.NoError(t, err)
+	assert.Equal(t, CompressZstd, b2.Mode)
+	assert.Equal(t, bSum, b2.Sum)
+
+	// Decompress data and check that it matches the original
+	var b1d bytes.Buffer
+	err = b1.Mode.decompressStream(&b1d, bytes.NewReader(b1.Data))
+	assert.NoError(t, err)
+	assert.Equal(t, a, b1d.Bytes())
+
+	var b2d bytes.Buffer
+	err = b2.Mode.decompressStream(&b2d, bytes.NewReader(b2.Data))
+	assert.NoError(t, err)
+	assert.Equal(t, b, b2d.Bytes())
 }
 
 var a = []byte(`A celebrated tenor had sung in Italian, and a notorious contralto had sung 
