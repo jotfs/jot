@@ -1,0 +1,13 @@
+[server]
+database = "jotfs-test.db"
+enable_versioning = false
+avg_chunk_kib = 1024
+port = 6777
+
+[store]
+access_key = "minioadmin"
+secret_key = "minioadmin"
+path_style = true
+disable_ssl = true
+endpoint = "localhost:9003"
+bucket = "jotfs-test"

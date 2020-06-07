@@ -39,7 +39,7 @@ func TestUpload(t *testing.T) {
 	defer clearFiles(t, client)
 
 	// Upload data
-	data := randBytes(200*miB, 7456)
+	data := randBytes(130*miB, 7456)
 	_, err := client.Upload(bytes.NewReader(data), "data.txt")
 	assert.NoError(t, err)
 
@@ -54,7 +54,7 @@ func TestDownload(t *testing.T) {
 	defer clearFiles(t, client)
 
 	// Upload data (none & zstd compression) and check download matches original data
-	data1 := randBytes(20*miB, 2854)
+	data1 := randBytes(10*miB, 2854)
 	for _, mode := range []CompressMode{CompressNone, CompressZstd} {
 		s1 := uploadTestFile(t, client, data1, "data1.txt", mode)
 
