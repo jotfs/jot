@@ -67,6 +67,7 @@ func (c *Client) VacuumStatus(ctx context.Context, id string) (Vacuum, error) {
 	return Vacuum{vacuum.Status, startedAt, completedAt}, nil
 }
 
+// Stats stores the summary statistics of the server.
 type Stats struct {
 	NumFiles        uint64
 	NumFileVersions uint64

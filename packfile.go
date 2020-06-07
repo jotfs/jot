@@ -17,7 +17,7 @@ type packfileBuilder struct {
 
 // newPackfileBuilder creates a new packfileBuilder
 func newPackfileBuilder(w io.Writer) (*packfileBuilder, error) {
-	// Send everything writen to the packfile through the hash function
+	// Send everything written to the packfile through the hash function
 	hash := newHash()
 	w = io.MultiWriter(w, hash)
 	wr := &countingWriter{w, 0}

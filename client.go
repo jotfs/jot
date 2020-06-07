@@ -126,6 +126,9 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	defer os.RemoveAll(dir)
 
 	packer, err := newPacker(dir, packFiles)
+	if err != nil {
+		return FileID{}, fmt.Errorf("creating new packer: %w", err)
+	}
 
 	// Get the chunker options from the server if we haven't done so already
 	if c.opts == nil {
