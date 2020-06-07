@@ -10,6 +10,8 @@ before_install:
   - docker pull minio/minio
   - bash download_jotfs_binary.sh
   - go get -t -v ./...
+  - pip install -U pip
+  - pip install awscli
 
 script:
   - bash run_tests.sh

@@ -11,3 +11,4 @@ path_style = true
 disable_ssl = true
 endpoint = "localhost:9003"
 bucket = "jotfs-test"
+region = "eu-west-1"
