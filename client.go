@@ -50,10 +50,6 @@ type Options struct {
 	// Compression, if set, overrides the default compression mode, CompressZstd.
 	Compression CompressMode
 
-	// Timeout specifies the maximum time limit for HTTP requests made by the client.
-	// It is unlimited by default.
-	Timeout time.Duration
-
 	// CacheDir specifies the directory the client may cache temporary data files.
 	// os.TempDir() by default. The directory must already exist.
 	CacheDir string
@@ -61,28 +57,25 @@ type Options struct {
 
 // New returns a new Client connecting to an JotFS server at the given endpoint URL.
 // Optional configuration may be set with opts.
-func New(endpoint string, opts *Options) (*Client, error) {
+func New(endpoint string, client *http.Client, opts *Options) (*Client, error) {
 	url, err := url.ParseRequestURI(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse endpoint: %v", err)
 	}
 
-	var timeout time.Duration
 	mode := CompressZstd
 	cacheDir := os.TempDir()
 	if opts != nil {
 		mode = opts.Compression
-		timeout = opts.Timeout
 		if opts.CacheDir != "" {
 			cacheDir = opts.CacheDir
 		}
 	}
 
-	hclient := &http.Client{Timeout: timeout}
 	return &Client{
 		host:     *url,
-		hclient:  hclient,
-		iclient:  pb.NewJotFSProtobufClient(endpoint, hclient),
+		hclient:  client,
+		iclient:  pb.NewJotFSProtobufClient(endpoint, client),
 		cacheDir: cacheDir,
 		mode:     mode,
 	}, nil

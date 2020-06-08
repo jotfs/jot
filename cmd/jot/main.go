@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -542,6 +544,11 @@ func main() {
 			Name:  "endpoint",
 			Usage: "set the server endpoint",
 		},
+		&cli.BoolFlag{
+			Name:  "tls_skip_verify",
+			Value: false,
+			Usage: "skip TLS certificate verification",
+		},
 	}
 
 	// Get the server endpoint, either from the command line option or config file, and
@@ -574,11 +581,18 @@ func main() {
 		if err != nil {
 			return err
 		}
-		client, err = jot.New(endpoint, nil)
+
+		hclient := http.DefaultClient
+		if c.Bool("tls_skip_verify") {
+			hclient.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}
+		}
+		client, err = jot.New(endpoint, hclient, nil)
 		if err != nil {
 			return err
 		}
-		adminC, err = admin.New(endpoint)
+		adminC, err = admin.New(endpoint, hclient)
 		return err
 	}
 
@@ -676,7 +690,7 @@ func main() {
 		},
 		{
 			Name:  "admin",
-			Usage: "server administration",
+			Usage: "server administration commands",
 			Subcommands: []*cli.Command{
 				{
 					Name:  "start-vacuum",

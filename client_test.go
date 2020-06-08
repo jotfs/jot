@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -16,11 +17,11 @@ import (
 
 func TestNew(t *testing.T) {
 	// New
-	_, err := New("https://localhost:8000", nil)
+	_, err := New("https://localhost:8000", http.DefaultClient, nil)
 	assert.NoError(t, err)
 
 	// New with options
-	client, err := New("http://example.com", &Options{
+	client, err := New("http://example.com", http.DefaultClient, &Options{
 		Compression: CompressNone,
 		CacheDir:    "/var/log",
 	})
@@ -29,7 +30,7 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, "/var/log", client.cacheDir)
 
 	// Error if endpoint string is empty
-	client, err = New("", nil)
+	client, err = New("", http.DefaultClient, nil)
 	assert.Error(t, err)
 	assert.Nil(t, client)
 }
@@ -213,7 +214,7 @@ func clearFiles(t *testing.T, client *Client) {
 }
 
 func testClient(t *testing.T) *Client {
-	client, err := New("http://localhost:6777", nil)
+	client, err := New("http://localhost:6777", http.DefaultClient, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func randBytes(n int, seed int64) []byte {
 }
 
 func BenchmarkUpload(b *testing.B) {
-	client, err := New("http://localhost:6777", nil)
+	client, err := New("http://localhost:6777", http.DefaultClient, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -21,11 +21,11 @@ type Client struct {
 }
 
 // New returns a new admin client.
-func New(endpoint string) (*Client, error) {
+func New(endpoint string, client *http.Client) (*Client, error) {
 	if _, err := url.Parse(endpoint); err != nil {
 		return nil, fmt.Errorf("unable to parse endpoint: %w", err)
 	}
-	iclient := pb.NewJotFSProtobufClient(endpoint, http.DefaultClient)
+	iclient := pb.NewJotFSProtobufClient(endpoint, client)
 	return &Client{iclient}, nil
 }
 
@@ -71,7 +71,7 @@ func (c *Client) VacuumStatus(ctx context.Context, id string) (Vacuum, error) {
 type Stats struct {
 	NumFiles        uint64
 	NumFileVersions uint64
-	TotalFilesSize   uint64
+	TotalFilesSize  uint64
 	TotalDataSize   uint64
 }
 
