@@ -29,6 +29,13 @@ const (
 	giB = 1024 * miB
 )
 
+// Build flags
+var (
+	Version   string
+	CommitID  string
+	BuildDate string
+)
+
 type handler func(*jot.Client, *cli.Context) error
 
 func getLatestVersion(client *jot.Client, name string) (jot.FileInfo, error) {
@@ -750,6 +757,17 @@ func main() {
 						return nil
 					},
 				},
+			},
+		},
+		{
+			Name:  "version",
+			Usage: "output version info",
+			Action: func(c *cli.Context) error {
+				format := "%-10s:  %s\n"
+				fmt.Printf(format, "Version", Version)
+				fmt.Printf(format, "Build date", BuildDate)
+				fmt.Printf(format, "Commit ID", CommitID)
+				return nil
 			},
 		},
 	}
