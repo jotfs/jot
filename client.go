@@ -116,7 +116,11 @@ func (c *Client) UploadWithContext(ctx context.Context, r io.Reader, dst string,
 	if err := os.Mkdir(dir, 0744); err != nil {
 		return FileID{}, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			os.Remove(dir)
+		}
+	}()
 
 	packer, err := newPacker(dir, packFiles)
 	if err != nil {
