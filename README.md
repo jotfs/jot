@@ -53,7 +53,7 @@ By default, `jot` will look for a profile named `default`. This may be overridde
 
 ```
 NAME:
-   jot - A CLI tool for working with an JotFS server
+   jot - A CLI tool for working with a JotFS server
 
 USAGE:
    jot [global options] command [command options] [arguments...]

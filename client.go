@@ -35,7 +35,7 @@ const (
 	maxPackfileSize = 128 * miB
 )
 
-// Client implements methods to interact with an JotFS server.
+// Client implements methods to interact with a JotFS server.
 type Client struct {
 	host     url.URL
 	hclient  *http.Client
@@ -55,7 +55,7 @@ type Options struct {
 	CacheDir string
 }
 
-// New returns a new Client connecting to an JotFS server at the given endpoint URL.
+// New returns a new Client connecting to a JotFS server at the given endpoint URL.
 // Optional configuration may be set with opts.
 func New(endpoint string, client *http.Client, opts *Options) (*Client, error) {
 	url, err := url.ParseRequestURI(endpoint)

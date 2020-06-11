@@ -147,7 +147,7 @@ func cp(client *jot.Client, c *cli.Context) error {
 		return uploadFile(c, client, srcEx, dst)
 
 	} else {
-		return fmt.Errorf("at least one of <src> or <dst> must be an jot:// location")
+		return fmt.Errorf("at least one of <src> or <dst> must be a jot:// location")
 	}
 
 	return nil
@@ -544,7 +544,7 @@ func main() {
 
 	app := cli.NewApp()
 	app.Name = "jot"
-	app.Usage = "A CLI tool for working with an JotFS server"
+	app.Usage = "A CLI tool for working with a JotFS server"
 	app.Description = description
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{

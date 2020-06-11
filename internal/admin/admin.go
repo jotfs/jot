@@ -15,7 +15,7 @@ import (
 // ErrVacuumInProgress is returned when a vacuum is already in progress on the server.
 var ErrVacuumInProgress = errors.New("vacuum in progress")
 
-// Client performs admin tasks on an JotFS server.
+// Client performs admin tasks on a JotFS server.
 type Client struct {
 	pb.JotFS
 }
