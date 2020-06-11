@@ -575,31 +575,34 @@ func main() {
 			return nil
 		}
 		var err error
-		endpoint, err = func() (string, error) {
-			endpoint := c.String("endpoint")
+		var endpoint string
+		var tlsSkipVerify bool
+		if err = func() error {
+			endpoint = c.String("endpoint")
 			if endpoint != "" {
-				return endpoint, nil
+				return nil
 			}
 			cfgName := c.String("config")
 			if cfgName == "" {
 				cfgName = getConfigFile()
 			}
 			if cfgName == "" {
-				return "", errors.New("unable to find config file")
+				return errors.New("unable to find config file")
 			}
 			profileName := c.String("profile")
 			profile, err := loadConfig(cfgName, profileName)
 			if err != nil {
-				return "", err
+				return err
 			}
-			return profile.Endpoint, nil
-		}()
-		if err != nil {
+			endpoint = profile.Endpoint
+			tlsSkipVerify = profile.TLSSkipVerify
+			return nil
+		}(); err != nil {
 			return err
 		}
 
 		hclient := http.DefaultClient
-		if c.Bool("tls_skip_verify") {
+		if c.Bool("tls_skip_verify") || tlsSkipVerify {
 			hclient.Transport = &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			}

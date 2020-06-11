@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/BurntSushi/toml"
 	"github.com/mitchellh/go-homedir"
@@ -19,8 +18,9 @@ type config struct {
 }
 
 type profile struct {
-	Name     string `toml:"name"`
-	Endpoint string `toml:"endpoint"`
+	Name          string `toml:"name"`
+	Endpoint      string `toml:"endpoint"`
+	TLSSkipVerify bool   `toml:"tls_skip_verify"`
 }
 
 // loadConfig loads a profile from a config file. Returns an error if the config file
@@ -56,18 +56,13 @@ func getConfigFile() string {
 	if name := os.Getenv(configFileEnvVar); name != "" {
 		return name
 	}
-	if isOneOf(runtime.GOOS, []string{"linux", "darwin", "freebsd", "openbsd", "netbsd"}) {
-		home, err := homedir.Dir()
-		if err != nil {
-			return ""
-		}
-		name := filepath.Join(home, ".jot", "config.toml")
-		if checkFile(name) {
-			return name
-		}
+	home, err := homedir.Dir()
+	if err != nil {
 		return ""
-	} else if runtime.GOOS == "windows" {
-		// TODO: try to return default windows config dir
+	}
+	name := filepath.Join(home, ".jot", "config.toml")
+	if checkFile(name) {
+		return name
 	}
 
 	return ""
