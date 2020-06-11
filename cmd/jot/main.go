@@ -213,7 +213,7 @@ func uploadRecursive(c *cli.Context, client *jot.Client, srcDir string, dstDir s
 		if err != nil {
 			return err
 		}
-		dst := filepath.Join(dstDir, rel)
+		dst := filepath.ToSlash(filepath.Join(dstDir, rel))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -262,7 +262,7 @@ func uploadDir(c *cli.Context, client *jot.Client, srcDir string, dstDir string)
 			continue
 		}
 		src := filepath.Join(srcDir, entry.Name())
-		dst := filepath.Join(dstDir, entry.Name())
+		dst := filepath.ToSlash(filepath.Join(dstDir, entry.Name()))
 		var err error
 		select {
 		case <-ctx.Done():
