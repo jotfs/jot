@@ -144,7 +144,7 @@ func cp(client *jot.Client, c *cli.Context) error {
 			return uploadDir(c, client, srcEx, dst)
 		}
 
-		return uploadFile(c.Context, client, srcEx, dst)
+		return uploadFile(c, client, srcEx, dst)
 
 	} else {
 		return fmt.Errorf("at least one of <src> or <dst> must be an jot:// location")
@@ -153,14 +153,23 @@ func cp(client *jot.Client, c *cli.Context) error {
 	return nil
 }
 
-func uploadFile(ctx context.Context, client *jot.Client, src string, dst string) error {
+func uploadFile(c *cli.Context, client *jot.Client, src string, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("unable to open %s: %v", src, err)
 	}
 	defer f.Close()
+	// Use the base name of the source if a destination path is not provided
+	if dst == "" {
+		dst = filepath.Base(src)
+	}
+	dst = filepath.ToSlash(dst)
 	fmt.Printf("upload: %s -> %s\n", src, dst)
-	_, err = client.UploadWithContext(ctx, f, dst, jot.CompressNone)
+	mode := jot.CompressZstd
+	if c.Bool("no-compression") {
+		mode = jot.CompressNone
+	}
+	_, err = client.UploadWithContext(c.Context, f, dst, mode)
 	return err
 }
 
@@ -184,7 +193,7 @@ func uploadRecursive(c *cli.Context, client *jot.Client, srcDir string, dstDir s
 	for i := uint(0); i < numWorkers; i++ {
 		g.Go(func() error {
 			for job := range queue {
-				err := uploadFile(c.Context, client, job.src, job.dst)
+				err := uploadFile(c, client, job.src, job.dst)
 				if err != nil {
 					return err
 				}
@@ -239,7 +248,7 @@ func uploadDir(c *cli.Context, client *jot.Client, srcDir string, dstDir string)
 	for i := 0; i < numWorkers; i++ {
 		g.Go(func() error {
 			for job := range queue {
-				err := uploadFile(c.Context, client, job.src, job.dst)
+				err := uploadFile(c, client, job.src, job.dst)
 				if err != nil {
 					return err
 				}
@@ -640,9 +649,10 @@ func main() {
 					Usage: "max. number of concurrent operations",
 					Value: 3,
 				},
-				&cli.StringFlag{
-					Name:  "compression",
-					Value: "zstd",
+				&cli.BoolFlag{
+					Name:  "no-compression",
+					Value: false,
+					Usage: "turn off chunk compression for uploads",
 				},
 			},
 			Action: makeAction(cp),
@@ -746,14 +756,12 @@ func main() {
 						if err != nil {
 							return err
 						}
-						compRatio := float64(stats.TotalFilesSize) / float64(stats.TotalDataSize)
 						tFilesSize := strings.TrimSpace(humanBytes(stats.TotalFilesSize))
 						tDataSize := strings.TrimSpace(humanBytes(stats.TotalDataSize))
 						fmt.Printf("%-23s = %d\n", "Number of files", stats.NumFiles)
 						fmt.Printf("%-23s = %d\n", "Number of file versions", stats.NumFileVersions)
 						fmt.Printf("%-23s = %s\n", "Total files size", tFilesSize)
 						fmt.Printf("%-23s = %s\n", "Total data size", tDataSize)
-						fmt.Printf("%-23s = %.1f\n", "Compression ratio", compRatio)
 						return nil
 					},
 				},
