@@ -540,7 +540,6 @@ func isJotLocation(s string) (string, bool) {
 func main() {
 	var client *jot.Client
 	var adminC *admin.Client
-	var endpoint string
 
 	app := cli.NewApp()
 	app.Name = "jot"
